@@ -1,0 +1,120 @@
+{
+  "data": [
+    {
+      "index": 0,
+      "bounding_boxes": {
+        "chart_title": [
+          {
+            "x_min": 0.0124,
+            "y_min": 0.0194,
+            "x_max": 0.7448,
+            "y_max": 0.1202,
+            "confidence": 0.8555
+          }
+        ],
+        "y_title": [
+          {
+            "x_min": 0.0228,
+            "y_min": 0.3721,
+            "x_max": 0.0477,
+            "y_max": 0.6357,
+            "confidence": 0.9327
+          }
+        ],
+        "xlabel": [
+          {
+            "x_min": 0.612,
+            "y_min": 0.8682,
+            "x_max": 0.7075,
+            "y_max": 0.907,
+            "confidence": 0.926
+          },
+          {
+            "x_min": 0.4066,
+            "y_min": 0.8682,
+            "x_max": 0.4917,
+            "y_max": 0.9147,
+            "confidence": 0.9237
+          },
+          {
+            "x_min": 0.1992,
+            "y_min": 0.8721,
+            "x_max": 0.2739,
+            "y_max": 0.9109,
+            "confidence": 0.9081
+          },
+          {
+            "x_min": 0.8237,
+            "y_min": 0.8721,
+            "x_max": 0.9212,
+            "y_max": 0.9109,
+            "confidence": 0.9053
+          }
+        ],
+        "ylabel": [
+          {
+            "x_min": 0.0705,
+            "y_min": 0.4109,
+            "x_max": 0.1162,
+            "y_max": 0.4535,
+            "confidence": 0.9115
+          },
+          {
+            "x_min": 0.0498,
+            "y_min": 0.1395,
+            "x_max": 0.1162,
+            "y_max": 0.1783,
+            "confidence": 0.9075
+          },
+          {
+            "x_min": 0.0809,
+            "y_min": 0.5504,
+            "x_max": 0.1183,
+            "y_max": 0.5891,
+            "confidence": 0.9045
+          },
+          {
+            "x_min": 0.0602,
+            "y_min": 0.2752,
+            "x_max": 0.1183,
+            "y_max": 0.314,
+            "confidence": 0.8975
+          },
+          {
+            "x_min": 0.0934,
+            "y_min": 0.6899,
+            "x_max": 0.1162,
+            "y_max": 0.7248,
+            "confidence": 0.8881
+          },
+          {
+            "x_min": 0.1037,
+            "y_min": 0.8256,
+            "x_max": 0.1141,
+            "y_max": 0.8643,
+            "confidence": 0.8253
+          }
+        ],
+        "legend_label": [
+          {
+            "x_min": 0.5394,
+            "y_min": 0.9341,
+            "x_max": 0.7697,
+            "y_max": 0.9767,
+            "confidence": 0.9365
+          },
+          {
+            "x_min": 0.251,
+            "y_min": 0.9341,
+            "x_max": 0.4896,
+            "y_max": 0.9767,
+            "confidence": 0.9261
+          }
+        ]
+      }
+    }
+  ],
+  "usage": {
+    "images_size_mb": 0.015370368957519531
+  }
+}

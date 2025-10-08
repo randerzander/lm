@@ -1,0 +1,17 @@
+TestingDocument
+A sample document with headings and placeholder text
+Introduction
+This is a placeholder document that can be used for any purpose. It contains some 
+headings and some placeholder text to fill the space. The text is not important and contains 
+no real value, but it is useful for testing. Below, we will have some simple tables and charts 
+that we can use to confirm Ingest is working as expected.
+Table 1
+This table describes some animals, and some activities they might be doing in specific 
+locations.
+Animal Activity Place
+Gira@e Driving a car At the beach
+Lion Putting on sunscreen At the park
+Cat Jumping onto a laptop In a home o@ice
+Dog Chasing a squirrel In the front yard
+Chart 1
+This chart shows some gadgets, and some very fictitious costs.
