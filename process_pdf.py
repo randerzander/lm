@@ -321,8 +321,8 @@ def extract(pdf_path="data/multimodal_test.pdf", output_dir="page_elements", scr
     pdf_extraction_time = process_pdf_with_paths(pdf_path, texts_dir, pages_dir, pages_per_process)
     
     # Step 2: Process page images to extract content elements with structure and OCR
-    from utils import process_page_images
-    process_page_images(pages_dir=pages_dir, output_dir=elements_dir, timing=timing, ocr_titles=ocr_titles)
+    import utils
+    utils.process_page_images(pages_dir=pages_dir, output_dir=elements_dir, timing=timing, ocr_titles=ocr_titles, batch_processing=True, batch_size=5)
     
     # Step 3: Create consolidated result object
     result = get_all_extracted_content(pages_dir=pages_dir, output_dir=elements_dir)
@@ -527,17 +527,37 @@ if __name__ == "__main__":
     import sys
     
     # Parse command line arguments
+    pdf_path = "data/multimodal_test.pdf"
     pages_per_process = 1
-    if len(sys.argv) > 1:
-        try:
-            pages_per_process = int(sys.argv[1])
-        except ValueError:
-            print(f"Invalid value for pages_per_process: {sys.argv[1]}. Using default value of 1.")
     
-    print(f"Using {pages_per_process} pages per process")
+    # Check command line arguments
+    if len(sys.argv) > 1:
+        # First argument could be either pdf_path or pages_per_process
+        arg1 = sys.argv[1]
+        if arg1.endswith('.pdf') and ('/' in arg1 or '\\' in arg1):
+            # It's a PDF file path
+            pdf_path = arg1
+            if len(sys.argv) > 2:
+                try:
+                    pages_per_process = int(sys.argv[2])
+                except ValueError:
+                    print(f"Invalid value for pages_per_process: {sys.argv[2]}. Using default value of 1.")
+        else:
+            # It's pages_per_process
+            try:
+                pages_per_process = int(arg1)
+            except ValueError:
+                print(f"Invalid value for pages_per_process: {arg1}. Using default value of 1.")
+            
+            # Second argument could be pdf_path
+            if len(sys.argv) > 2:
+                if sys.argv[2].endswith('.pdf') and ('/' in sys.argv[2] or '\\' in sys.argv[2]):
+                    pdf_path = sys.argv[2]
+    
+    print(f"Processing {pdf_path} with {pages_per_process} pages per process")
     
     # Example usage
-    result = extract(scratch_dir="scratch", timing=True, ocr_titles=False, pages_per_process=pages_per_process)
+    result = extract(pdf_path=pdf_path, scratch_dir="scratch", timing=True, ocr_titles=False, pages_per_process=pages_per_process)
     
     # Print content summary
     print("\n" + "="*50)
@@ -580,12 +600,3 @@ if __name__ == "__main__":
     save_extracted_content_to_json(result)
     
     print("\nExtraction completed! Total elements found:", content_counts['total_elements'])
-    # Save the result to a JSON file
-    from utils import save_extracted_content_to_json
-    save_extracted_content_to_json(result)
-    # Save the result to a JSON file
-    from utils import save_extracted_content_to_json
-    save_extracted_content_to_json(result)
-    
-    print("
-Extraction completed! Total elements found:", content_counts['total_elements'])
