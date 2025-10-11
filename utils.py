@@ -56,6 +56,78 @@ def extract_bounding_boxes(image_path, api_key=None):
         response.raise_for_status()
 
 
+def extract_bounding_boxes_batch(image_paths, api_key=None, batch_size=5):
+    """
+    Extract bounding boxes for various content types from multiple images using NVIDIA AI API in batches.
+    
+    Args:
+        image_paths (list): List of paths to image files
+        api_key (str, optional): API key for authorization. If not provided, 
+                                assumes running in NGC environment
+        batch_size (int): Number of images to process in each batch (default: 5)
+    
+    Returns:
+        list: List of JSON responses containing bounding boxes for various content types
+    """
+    invoke_url = "https://ai.api.nvidia.com/v1/cv/nvidia/nemoretriever-page-elements-v2"
+    
+    # Set authorization header
+    # If api_key is None, try to get it from environment variable
+    if api_key is None:
+        api_key = os.getenv('NVIDIA_API_KEY')
+    
+    if api_key:
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Accept": "application/json"
+        }
+    else:
+        headers = {
+            "Authorization": "Bearer $API_KEY_REQUIRED_IF_EXECUTING_OUTSIDE_NGC",
+            "Accept": "application/json"
+        }
+
+    results = []
+    
+    # Process images in batches
+    for i in range(0, len(image_paths), batch_size):
+        batch_paths = image_paths[i:i + batch_size]
+        print(f"Processing page elements batch {i//batch_size + 1}/{(len(image_paths)-1)//batch_size + 1} ({len(batch_paths)} images)")
+        
+        # Prepare batch payload
+        inputs = []
+        for img_path in batch_paths:
+            with open(img_path, "rb") as f:
+                image_b64 = base64.b64encode(f.read()).decode()
+            
+            assert len(image_b64) < 180_000, \
+              f"Image {img_path} is too large. To upload larger images, use the assets API (see docs)"
+            
+            inputs.append({
+                "type": "image_url",
+                "url": f"data:image/jpeg;base64,{image_b64}"
+            })
+        
+        payload = {"input": inputs}
+        
+        try:
+            response = requests.post(invoke_url, headers=headers, json=payload)
+            
+            if response.status_code == 200:
+                batch_result = response.json()
+                results.append(batch_result)
+            else:
+                print(f"Page elements API request failed with status {response.status_code}: {response.text}")
+                # Return partial results or raise exception based on requirements
+                raise requests.exceptions.RequestException(f"Page elements API request failed: {response.status_code}")
+        except Exception as e:
+            print(f"Error processing page elements batch: {str(e)}")
+            # Continue with other batches or raise exception based on requirements
+            raise
+    
+    return results
+
+
 def extract_table_structure(image_path, api_key=None):
     """
     Extract table structure from an image using NVIDIA AI API.
@@ -104,6 +176,96 @@ def extract_table_structure(image_path, api_key=None):
     else:
         print(f"API request failed with status {response.status_code}: {response.text}")
         response.raise_for_status()
+
+
+def extract_table_structure_batch(image_paths, api_key=None, batch_size=5):
+    """
+    Extract table structure from multiple images using NVIDIA AI API in batches.
+    
+    Args:
+        image_paths (list): List of paths to image files
+        api_key (str, optional): API key for authorization. If not provided, 
+                                assumes running in NGC environment
+        batch_size (int): Number of images to process in each batch (default: 5)
+    
+    Returns:
+        list: List of JSON responses containing table structure information for each image
+    """
+    invoke_url = "https://ai.api.nvidia.com/v1/cv/nvidia/nemoretriever-table-structure-v1"
+    
+    # Set authorization header
+    # If api_key is None, try to get it from environment variable
+    if api_key is None:
+        api_key = os.getenv('NVIDIA_API_KEY')
+    
+    if api_key:
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Accept": "application/json"
+        }
+    else:
+        headers = {
+            "Authorization": "Bearer $API_KEY_REQUIRED_IF_EXECUTING_OUTSIDE_NGC",
+            "Accept": "application/json"
+        }
+
+    results = []
+    
+    # Process images in batches
+    for i in range(0, len(image_paths), batch_size):
+        batch_paths = image_paths[i:i + batch_size]
+        print(f"Processing table structure batch {i//batch_size + 1}/{(len(image_paths)-1)//batch_size + 1} ({len(batch_paths)} images)")
+        
+        # Prepare batch payload
+        inputs = []
+        for img_path in batch_paths:
+            with open(img_path, "rb") as f:
+                image_b64 = base64.b64encode(f.read()).decode()
+            
+            assert len(image_b64) < 180_000, \
+              f"Image {img_path} is too large. To upload larger images, use the assets API (see docs)"
+            
+            inputs.append({
+                "type": "image_url",
+                "url": f"data:image/jpeg;base64,{image_b64}"
+            })
+        
+        payload = {"input": inputs}
+        
+        try:
+            response = requests.post(invoke_url, headers=headers, json=payload)
+            
+            if response.status_code == 200:
+                batch_result = response.json()
+                results.append(batch_result)
+            else:
+                print(f"Table structure API request failed with status {response.status_code}: {response.text}")
+                # Return partial results or raise exception based on requirements
+                raise requests.exceptions.RequestException(f"Table structure API request failed: {response.status_code}")
+        except Exception as e:
+            print(f"Error processing table structure batch: {str(e)}")
+            # Continue with other batches or raise exception based on requirements
+            raise
+    
+    return results
+
+
+def extract_table_structure(image_path, api_key=None):
+    """
+    Extract table structure from an image using NVIDIA AI API.
+    
+    Args:
+        image_path (str): Path to the image file
+        api_key (str, optional): API key for authorization. If not provided, 
+                                assumes running in NGC environment
+    
+    Returns:
+        dict: JSON response containing table structure information
+    """
+    # Use batch function with single image for consistency
+    batch_results = extract_table_structure_batch([image_path], api_key, batch_size=1)
+    # Return the first (and only) result from the batch
+    return batch_results[0] if batch_results else {}
 
 
 def extract_ocr_text(image_path, api_key=None):
@@ -156,6 +318,96 @@ def extract_ocr_text(image_path, api_key=None):
         response.raise_for_status()
 
 
+def extract_ocr_text_batch(image_paths, api_key=None, batch_size=10):
+    """
+    Extract text from multiple images using NVIDIA OCR API in batches.
+    
+    Args:
+        image_paths (list): List of paths to image files
+        api_key (str, optional): API key for authorization. If not provided, 
+                                assumes running in NGC environment
+        batch_size (int): Number of images to process in each batch (default: 10)
+    
+    Returns:
+        list: List of JSON responses containing OCR text results for each image
+    """
+    invoke_url = "https://ai.api.nvidia.com/v1/cv/nvidia/nemoretriever-ocr-v1"
+    
+    # Set authorization header
+    # If api_key is None, try to get it from environment variable
+    if api_key is None:
+        api_key = os.getenv('NVIDIA_API_KEY')
+    
+    if api_key:
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Accept": "application/json"
+        }
+    else:
+        headers = {
+            "Authorization": "Bearer $API_KEY_REQUIRED_IF_EXECUTING_OUTSIDE_NGC",
+            "Accept": "application/json"
+        }
+
+    results = []
+    
+    # Process images in batches
+    for i in range(0, len(image_paths), batch_size):
+        batch_paths = image_paths[i:i + batch_size]
+        print(f"Processing OCR batch {i//batch_size + 1}/{(len(image_paths)-1)//batch_size + 1} ({len(batch_paths)} images)")
+        
+        # Prepare batch payload
+        inputs = []
+        for img_path in batch_paths:
+            with open(img_path, "rb") as f:
+                image_b64 = base64.b64encode(f.read()).decode()
+            
+            assert len(image_b64) < 180_000, \
+              f"Image {img_path} is too large. To upload larger images, use the assets API (see docs)"
+            
+            inputs.append({
+                "type": "image_url",
+                "url": f"data:image/jpeg;base64,{image_b64}"
+            })
+        
+        payload = {"input": inputs}
+        
+        try:
+            response = requests.post(invoke_url, headers=headers, json=payload)
+            
+            if response.status_code == 200:
+                batch_result = response.json()
+                results.append(batch_result)
+            else:
+                print(f"OCR API request failed with status {response.status_code}: {response.text}")
+                # Return partial results or raise exception based on requirements
+                raise requests.exceptions.RequestException(f"OCR API request failed: {response.status_code}")
+        except Exception as e:
+            print(f"Error processing OCR batch: {str(e)}")
+            # Continue with other batches or raise exception based on requirements
+            raise
+    
+    return results
+
+
+def extract_ocr_text(image_path, api_key=None):
+    """
+    Extract text from an image using NVIDIA OCR API.
+    
+    Args:
+        image_path (str): Path to the image file
+        api_key (str, optional): API key for authorization. If not provided, 
+                                assumes running in NGC environment
+    
+    Returns:
+        dict: JSON response containing OCR text results
+    """
+    # Use batch function with single image for consistency
+    batch_results = extract_ocr_text_batch([image_path], api_key, batch_size=1)
+    # Return the first (and only) result from the batch
+    return batch_results[0] if batch_results else {}
+
+
 def extract_graphic_elements(image_path, api_key=None):
     """
     Extract graphic elements from an image using NVIDIA AI API.
@@ -205,16 +457,18 @@ def extract_graphic_elements(image_path, api_key=None):
         print(f"Graphic elements API request failed with status {response.status_code}: {response.text}")
         response.raise_for_status()
 
-def process_page_images(pages_dir="pages", output_dir="page_elements", timing=False, ocr_titles=False):
+def process_page_images(pages_dir="pages", output_dir="page_elements", timing=False, ocr_titles=False, batch_processing=True):
     """
     Process all page images in the specified directory, extract content elements,
     and save them in subdirectories organized by content type in JSONL format.
+    Uses batch processing for page element extraction with fallback to single image processing.
     
     Args:
         pages_dir (str): Directory containing page images
         output_dir (str): Output directory for extracted elements
         timing (bool): Whether to track and report timing for each stage
         ocr_titles (bool): Whether to perform OCR on title elements
+        batch_processing (bool): Whether to use batch processing for API calls (default: True)
     """
     # Initialize timing variables
     if timing:
