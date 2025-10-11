@@ -578,7 +578,7 @@ if __name__ == "__main__":
     print(f"\nContent Type Breakdown:")
     for content_type, stats in content_counts['content_type_breakdown'].items():
         print(f"  {content_type}:")
-        print(f"    Elements: {stats['elements']}")
+        print(f"    Elements: {stats['total_elements']}")
         print(f"    Inference Requests: {stats['inference_requests']}")
         print(f"    Words: {stats['text_stats']['words']}")
         print(f"    Characters: {stats['text_stats']['chars']}")
