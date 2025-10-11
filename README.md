@@ -108,10 +108,11 @@ python process_pdf.py 10
 ```
 lm/
 ├── data/                 # Input PDF documents
-├── scratch/               # Temporary processing files
-│   ├── texts/            # Extracted text from PDF pages
-│   ├── pages/            # Rendered page images
-│   └── page_elements/    # Detected content elements
+├── extracts/             # Output directory for extraction results (one subdirectory per document)
+│   ├── {source_fn}/      # Extraction results for a specific document (e.g., my_document/)
+│   │   ├── texts/        # Extracted text from PDF pages
+│   │   ├── pages/        # Rendered page images
+│   │   └── page_elements/ # Detected content elements
 ├── process_pdf.py        # Main processing script
 ├── utils.py             # Utility functions
 └── requirements.txt      # Python dependencies
@@ -165,6 +166,7 @@ Key configuration options in `process_pdf.py`:
 
 - `pages_per_process`: Number of pages to process in each multiprocessing unit (default: 1)
 - `max_processes`: Maximum number of parallel processes to use (default: system CPU count)
+- `extract_dir`: Base directory for extraction results (default: 'extracts/{source_fn}' where source_fn is the PDF filename without extension)
 - `ocr_titles`: Whether to perform OCR on title elements (default: False)
 - `timing`: Enable detailed timing reports (default: False)
 
