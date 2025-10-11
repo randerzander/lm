@@ -289,15 +289,15 @@ def process_pdf(pdf_path):
     return pdf_extraction_time
 
 
-def extract(pdf_path="data/multimodal_test.pdf", output_dir="page_elements", scratch_dir="scratch", timing=False, ocr_titles=False, pages_per_process=1, max_processes=None):
+def extract(pdf_path="data/multimodal_test.pdf", output_dir="page_elements", extract_dir=None, timing=False, ocr_titles=False, pages_per_process=1, max_processes=None):
     """
     Complete extraction function that processes a PDF and returns a consolidated result object
     containing all extracted content with texts, filepaths to related images on disk, and bounding boxes.
     
     Args:
         pdf_path (str): Path to the PDF file to process
-        output_dir (str): Output directory for extracted elements (relative to scratch_dir)
-        scratch_dir (str): Base directory for temporary files, defaults to 'scratch' in current working directory
+        output_dir (str): Output directory for extracted elements (relative to extract_dir)
+        extract_dir (str): Base directory for extraction results, defaults to 'extracts/{source_fn}' where source_fn is the PDF filename without extension
         timing (bool): Whether to track and report timing for each stage
         ocr_titles (bool): Whether to perform OCR on title elements, defaults to False
         pages_per_process (int): Number of pages to process in each process (default: 1)
@@ -310,17 +310,22 @@ def extract(pdf_path="data/multimodal_test.pdf", output_dir="page_elements", scr
     
     start_time = time.time()
     
-    # Create scratch directory and clean it if it already exists
-    if os.path.exists(scratch_dir):
-        shutil.rmtree(scratch_dir)
-    os.makedirs(scratch_dir, exist_ok=True)
+    # Generate default extract_dir based on the source PDF filename if not provided
+    if extract_dir is None:
+        source_fn = os.path.splitext(os.path.basename(pdf_path))[0]  # Get filename without extension
+        extract_dir = os.path.join("extracts", source_fn)
     
-    # Set up paths relative to scratch directory
-    pages_dir = os.path.join(scratch_dir, "pages")
-    texts_dir = os.path.join(scratch_dir, "texts")
-    elements_dir = os.path.join(scratch_dir, output_dir)  # output_dir is relative to scratch_dir
+    # Create extract directory and clean it if it already exists
+    if os.path.exists(extract_dir):
+        shutil.rmtree(extract_dir)
+    os.makedirs(extract_dir, exist_ok=True)
     
-    # Create subdirectories in scratch
+    # Set up paths relative to extract directory
+    pages_dir = os.path.join(extract_dir, "pages")
+    texts_dir = os.path.join(extract_dir, "texts")
+    elements_dir = os.path.join(extract_dir, output_dir)  # output_dir is relative to extract_dir
+    
+    # Create subdirectories in extract directory
     os.makedirs(pages_dir, exist_ok=True)
     os.makedirs(texts_dir, exist_ok=True)
     
@@ -619,7 +624,7 @@ if __name__ == "__main__":
             pdf_name = os.path.splitext(os.path.basename(pdf_file))[0]
             scratch_dir = f"scratch_{pdf_name}"
             
-            result = extract(pdf_path=pdf_file, scratch_dir=scratch_dir, timing=True, ocr_titles=False, pages_per_process=pages_per_process, max_processes=max_processes)
+            result = extract(pdf_path=pdf_file, extract_dir=scratch_dir, timing=True, ocr_titles=False, pages_per_process=pages_per_process, max_processes=max_processes)
             
             # Print content summary for each PDF
             print(f"\nContent summary for {pdf_file}:")
@@ -655,15 +660,19 @@ if __name__ == "__main__":
         print(f"Processing {target_path} with {pages_per_process} pages per process")
         
         # Example usage - single PDF file
-        result = extract(pdf_path=target_path, scratch_dir="scratch", timing=True, ocr_titles=False, pages_per_process=pages_per_process, max_processes=max_processes)
+        result = extract(pdf_path=target_path, timing=True, ocr_titles=False, pages_per_process=pages_per_process, max_processes=max_processes)
+        
+        # Determine the output directory based on the default naming
+        source_fn = os.path.splitext(os.path.basename(target_path))[0]
+        output_dir = os.path.join("extracts", source_fn)
         
         # Print content summary
         print("\n" + "="*50)
-        print_content_summary("scratch/page_elements")
+        print_content_summary(f"{output_dir}/page_elements")
         
         # Print detailed content statistics
         from utils import get_content_counts_with_text_stats
-        content_counts = get_content_counts_with_text_stats("scratch/page_elements")
+        content_counts = get_content_counts_with_text_stats(f"{output_dir}/page_elements")
         
         print(f"\nDetailed Content Statistics:")
         print("="*50)
