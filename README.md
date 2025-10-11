@@ -50,9 +50,44 @@ Process a PDF document with default settings:
 python process_pdf.py
 ```
 
-### Advanced Multiprocessing Options
+### Advanced Options
 
-The tool supports configurable multiprocessing for PDF page processing:
+The tool supports various command-line options for processing:
+
+#### Single PDF Processing
+
+Process a single PDF file with default settings:
+```bash
+python process_pdf.py
+```
+
+Process a specific PDF file:
+```bash
+python process_pdf.py /path/to/your/document.pdf
+```
+
+Process with custom pages per process and max processes:
+```bash
+# python process_pdf.py [pages_per_process] [max_processes] [pdf_path]
+python process_pdf.py 2 4 /path/to/your/document.pdf
+```
+
+#### Directory Processing (NEW!)
+
+Process all PDFs in a directory:
+```bash
+python process_pdf.py /path/to/directory/
+```
+
+Process all PDFs in a directory with custom settings:
+```bash
+# python process_pdf.py [pages_per_process] [max_processes] [directory_path]
+python process_pdf.py 2 4 /path/to/directory/
+```
+
+#### Multiprocessing Control
+
+Control the multiprocessing behavior:
 
 ```bash
 # Process 1 page per process (maximum parallelization)
@@ -60,6 +95,9 @@ python process_pdf.py 1
 
 # Process 2 pages per process (balanced approach)
 python process_pdf.py 2
+
+# Process with 2 pages per process and up to 8 parallel processes
+python process_pdf.py 2 8
 
 # Process all pages in a single process (minimal overhead)
 python process_pdf.py 10
@@ -126,6 +164,7 @@ The tool implements intelligent multiprocessing for optimal performance:
 Key configuration options in `process_pdf.py`:
 
 - `pages_per_process`: Number of pages to process in each multiprocessing unit (default: 1)
+- `max_processes`: Maximum number of parallel processes to use (default: system CPU count)
 - `ocr_titles`: Whether to perform OCR on title elements (default: False)
 - `timing`: Enable detailed timing reports (default: False)
 
@@ -149,21 +188,27 @@ For best performance, consider:
 
 1. **Large Documents (50+ pages)**:
    ```bash
-   python process_pdf.py 3-5
+   python process_pdf.py 3 4
    ```
-   Process 3-5 pages per process to balance parallelization with overhead.
+   Process 3 pages per process with up to 4 parallel processes to balance parallelization with overhead.
 
 2. **Small Documents (<10 pages)**:
    ```bash
-   python process_pdf.py 1
+   python process_pdf.py 1 8
    ```
-   Maximum parallelization for fastest processing.
+   Maximum parallelization with up to 8 processes for fastest processing.
 
 3. **Limited System Resources**:
    ```bash
-   python process_pdf.py 10
+   python process_pdf.py 2 2
    ```
    Reduce concurrent processes to minimize resource usage.
+
+4. **Many PDFs in Directory**:
+   ```bash
+   python process_pdf.py 1 2 /path/to/directory/
+   ```
+   Process with fewer parallel processes when handling multiple files to avoid system overload.
 
 ### Timing Reports
 
