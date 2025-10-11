@@ -527,16 +527,21 @@ if __name__ == "__main__":
     import sys
     
     # Parse command line arguments
-    pdf_path = "data/multimodal_test.pdf"
+    from os.path import isdir, join
+    from glob import glob
+    
+    target_path = "data/multimodal_test.pdf"  # Default single PDF
     pages_per_process = 1
     
     # Check command line arguments
     if len(sys.argv) > 1:
-        # First argument could be either pdf_path or pages_per_process
         arg1 = sys.argv[1]
-        if arg1.endswith('.pdf') and ('/' in arg1 or '\\' in arg1):
+        if isdir(arg1):
+            # It's a directory - process all PDFs in this directory
+            target_path = arg1
+        elif arg1.endswith('.pdf') and ('/' in arg1 or '\\' in arg1):
             # It's a PDF file path
-            pdf_path = arg1
+            target_path = arg1
             if len(sys.argv) > 2:
                 try:
                     pages_per_process = int(sys.argv[2])
@@ -549,54 +554,110 @@ if __name__ == "__main__":
             except ValueError:
                 print(f"Invalid value for pages_per_process: {arg1}. Using default value of 1.")
             
-            # Second argument could be pdf_path
+            # Second argument could be pdf_path or directory
             if len(sys.argv) > 2:
-                if sys.argv[2].endswith('.pdf') and ('/' in sys.argv[2] or '\\' in sys.argv[2]):
-                    pdf_path = sys.argv[2]
+                arg2 = sys.argv[2]
+                if isdir(arg2):
+                    # It's a directory - process all PDFs in this directory
+                    target_path = arg2
+                elif arg2.endswith('.pdf') and ('/' in arg2 or '\\' in arg2):
+                    target_path = arg2
     
-    print(f"Processing {pdf_path} with {pages_per_process} pages per process")
-    
-    # Example usage
-    result = extract(pdf_path=pdf_path, scratch_dir="scratch", timing=True, ocr_titles=False, pages_per_process=pages_per_process)
-    
-    # Print content summary
-    print("\n" + "="*50)
-    print_content_summary("scratch/page_elements")
-    
-    # Print detailed content statistics
-    from utils import get_content_counts_with_text_stats
-    content_counts = get_content_counts_with_text_stats("scratch/page_elements")
-    
-    print(f"\nDetailed Content Statistics:")
-    print("="*50)
-    print(f"Total Elements: {content_counts['total_elements']}")
-    print(f"Total Inference Requests: {content_counts['total_inference_requests']}")
-    print(f"Total Words: {content_counts['total_text_stats']['words']}")
-    print(f"Total Characters: {content_counts['total_text_stats']['chars']}")
-    print(f"Total Lines: {content_counts['total_text_stats']['lines']}")
-    
-    print(f"\nContent Type Breakdown:")
-    for content_type, stats in content_counts['content_type_breakdown'].items():
-        print(f"  {content_type}:")
-        print(f"    Elements: {stats['total_elements']}")
-        print(f"    Inference Requests: {stats['inference_requests']}")
-        print(f"    Words: {stats['text_stats']['words']}")
-        print(f"    Characters: {stats['text_stats']['chars']}")
-        print(f"    Lines: {stats['text_stats']['lines']}")
-    print()
-    
-    print("Per-Page Breakdown:")
-    for page_name, page_stats in content_counts['pages'].items():
-        print(f"  {page_name}:")
-        for content_type, count in page_stats['content_types'].items():
-            print(f"    {content_type}: {count} elements")
-        print(f"    Inference requests: {page_stats['inference_requests']}")
-        print(f"    Words: {page_stats['text_stats']['words']}")
-        print(f"    Characters: {page_stats['text_stats']['chars']}")
-        print(f"    Lines: {page_stats['text_stats']['lines']}")
-    
-    # Save the result to a JSON file
-    from utils import save_extracted_content_to_json
-    save_extracted_content_to_json(result)
-    
-    print("\nExtraction completed! Total elements found:", content_counts['total_elements'])
+    # Check if target_path is a directory
+    if os.path.isdir(target_path):
+        print(f"Processing all PDFs in directory: {target_path}")
+        pdf_files = glob(os.path.join(target_path, "*.pdf"))
+        
+        if not pdf_files:
+            print(f"No PDF files found in directory: {target_path}")
+            sys.exit(1)
+        
+        print(f"Found {len(pdf_files)} PDF files to process: {pdf_files}")
+        
+        # Process each PDF file
+        for i, pdf_file in enumerate(pdf_files):
+            print(f"\nProcessing PDF {i+1}/{len(pdf_files)}: {pdf_file}")
+            
+            # Create a unique scratch directory for each PDF to avoid conflicts
+            pdf_name = os.path.splitext(os.path.basename(pdf_file))[0]
+            scratch_dir = f"scratch_{pdf_name}"
+            
+            result = extract(pdf_path=pdf_file, scratch_dir=scratch_dir, timing=True, ocr_titles=False, pages_per_process=pages_per_process)
+            
+            # Print content summary for each PDF
+            print(f"\nContent summary for {pdf_file}:")
+            print("="*50)
+            print_content_summary(f"{scratch_dir}/page_elements")
+            
+            # Print detailed content statistics
+            from utils import get_content_counts_with_text_stats
+            content_counts = get_content_counts_with_text_stats(f"{scratch_dir}/page_elements")
+            
+            print(f"\nDetailed Content Statistics for {pdf_file}:")
+            print("="*50)
+            print(f"Total Elements: {content_counts['total_elements']}")
+            print(f"Total Inference Requests: {content_counts['total_inference_requests']}")
+            print(f"Total Words: {content_counts['total_text_stats']['words']}")
+            print(f"Total Characters: {content_counts['total_text_stats']['chars']}")
+            print(f"Total Lines: {content_counts['total_text_stats']['lines']}")
+            
+            print(f"\nContent Type Breakdown:")
+            for content_type, stats in content_counts['content_type_breakdown'].items():
+                print(f"  {content_type}:")
+                print(f"    Elements: {stats['total_elements']}")
+                print(f"    Inference Requests: {stats['inference_requests']}")
+                print(f"    Words: {stats['text_stats']['words']}")
+                print(f"    Characters: {stats['text_stats']['chars']}")
+                print(f"    Lines: {stats['text_stats']['lines']}")
+            
+            print(f"\nExtraction completed for {pdf_file}! Total elements found: {content_counts['total_elements']}")
+        
+        print(f"\nCompleted processing all {len(pdf_files)} PDF files in {target_path}")
+        
+    else:
+        print(f"Processing {target_path} with {pages_per_process} pages per process")
+        
+        # Example usage - single PDF file
+        result = extract(pdf_path=target_path, scratch_dir="scratch", timing=True, ocr_titles=False, pages_per_process=pages_per_process)
+        
+        # Print content summary
+        print("\n" + "="*50)
+        print_content_summary("scratch/page_elements")
+        
+        # Print detailed content statistics
+        from utils import get_content_counts_with_text_stats
+        content_counts = get_content_counts_with_text_stats("scratch/page_elements")
+        
+        print(f"\nDetailed Content Statistics:")
+        print("="*50)
+        print(f"Total Elements: {content_counts['total_elements']}")
+        print(f"Total Inference Requests: {content_counts['total_inference_requests']}")
+        print(f"Total Words: {content_counts['total_text_stats']['words']}")
+        print(f"Total Characters: {content_counts['total_text_stats']['chars']}")
+        print(f"Total Lines: {content_counts['total_text_stats']['lines']}")
+        
+        print(f"\nContent Type Breakdown:")
+        for content_type, stats in content_counts['content_type_breakdown'].items():
+            print(f"  {content_type}:")
+            print(f"    Elements: {stats['total_elements']}")
+            print(f"    Inference Requests: {stats['inference_requests']}")
+            print(f"    Words: {stats['text_stats']['words']}")
+            print(f"    Characters: {stats['text_stats']['chars']}")
+            print(f"    Lines: {stats['text_stats']['lines']}")
+        print()
+        
+        print("Per-Page Breakdown:")
+        for page_name, page_stats in content_counts['pages'].items():
+            print(f"  {page_name}:")
+            for content_type, count in page_stats['content_types'].items():
+                print(f"    {content_type}: {count} elements")
+            print(f"    Inference requests: {page_stats['inference_requests']}")
+            print(f"    Words: {page_stats['text_stats']['words']}")
+            print(f"    Characters: {page_stats['text_stats']['chars']}")
+            print(f"    Lines: {page_stats['text_stats']['lines']}")
+        
+        # Save the result to a JSON file
+        from utils import save_extracted_content_to_json
+        save_extracted_content_to_json(result)
+        
+        print("\nExtraction completed! Total elements found:", content_counts['total_elements'])
