@@ -68,7 +68,7 @@ def process_pages_batch(pdf_path, page_nums, texts_dir, pages_dir):
     return results
 
 
-def process_pdf_with_paths_multiprocessing(pdf_path, texts_dir, pages_dir, pages_per_process=1):
+def process_pdf_with_paths_multiprocessing(pdf_path, texts_dir, pages_dir, pages_per_process=1, max_processes=None):
     """
     Process PDF and save outputs to specified directories using multiprocessing.
     
@@ -77,6 +77,7 @@ def process_pdf_with_paths_multiprocessing(pdf_path, texts_dir, pages_dir, pages
         texts_dir (str): Directory to save extracted text files
         pages_dir (str): Directory to save extracted page images
         pages_per_process (int): Number of pages to process in each process (default: 1)
+        max_processes (int): Maximum number of processes to use (default: None, which uses system CPU count)
     """
     # Track time for PDF extraction
     start_time = time.time()
@@ -92,7 +93,11 @@ def process_pdf_with_paths_multiprocessing(pdf_path, texts_dir, pages_dir, pages
     
     # Use multiprocessing to process pages in parallel
     # Limit the number of processes to avoid overwhelming the system
-    max_processes = min(multiprocessing.cpu_count(), (num_pages + pages_per_process - 1) // pages_per_process, 4)  # Cap at 4 processes
+    if max_processes is None:
+        max_processes = min(multiprocessing.cpu_count(), (num_pages + pages_per_process - 1) // pages_per_process, 4)  # Cap at 4 processes
+    else:
+        # Respect user's choice but cap based on page availability
+        max_processes = min(max_processes, (num_pages + pages_per_process - 1) // pages_per_process)
     
     print(f"Processing {num_pages} pages using {max_processes} processes, {pages_per_process} pages per process...")
     
@@ -156,7 +161,7 @@ def process_pdf_with_paths_multiprocessing(pdf_path, texts_dir, pages_dir, pages
     return pdf_extraction_time
 
 
-def process_pdf_with_paths(pdf_path, texts_dir, pages_dir, pages_per_process=1):
+def process_pdf_with_paths(pdf_path, texts_dir, pages_dir, pages_per_process=1, max_processes=None):
     """
     Process PDF and save outputs to specified directories.
     
@@ -165,13 +170,14 @@ def process_pdf_with_paths(pdf_path, texts_dir, pages_dir, pages_per_process=1):
         texts_dir (str): Directory to save extracted text files
         pages_dir (str): Directory to save extracted page images
         pages_per_process (int): Number of pages to process in each process (default: 1)
+        max_processes (int): Maximum number of processes to use (default: None, which uses system CPU count)
     """
     # For benchmarking, we can switch between sequential and multiprocessing
     # Uncomment the line below to use sequential processing instead
     # return process_pdf_with_paths_sequential(pdf_path, texts_dir, pages_dir)
     
     # Use multiprocessing version
-    return process_pdf_with_paths_multiprocessing(pdf_path, texts_dir, pages_dir, pages_per_process)
+    return process_pdf_with_paths_multiprocessing(pdf_path, texts_dir, pages_dir, pages_per_process, max_processes)
 
 
 def process_pdf_with_paths_sequential(pdf_path, texts_dir, pages_dir):
@@ -283,7 +289,7 @@ def process_pdf(pdf_path):
     return pdf_extraction_time
 
 
-def extract(pdf_path="data/multimodal_test.pdf", output_dir="page_elements", scratch_dir="scratch", timing=False, ocr_titles=False, pages_per_process=1):
+def extract(pdf_path="data/multimodal_test.pdf", output_dir="page_elements", scratch_dir="scratch", timing=False, ocr_titles=False, pages_per_process=1, max_processes=None):
     """
     Complete extraction function that processes a PDF and returns a consolidated result object
     containing all extracted content with texts, filepaths to related images on disk, and bounding boxes.
@@ -295,6 +301,7 @@ def extract(pdf_path="data/multimodal_test.pdf", output_dir="page_elements", scr
         timing (bool): Whether to track and report timing for each stage
         ocr_titles (bool): Whether to perform OCR on title elements, defaults to False
         pages_per_process (int): Number of pages to process in each process (default: 1)
+        max_processes (int): Maximum number of processes to use (default: None, which uses system CPU count)
         
     Returns:
         dict: A consolidated result object containing all extracted content
@@ -318,7 +325,7 @@ def extract(pdf_path="data/multimodal_test.pdf", output_dir="page_elements", scr
     os.makedirs(texts_dir, exist_ok=True)
     
     # Step 1: Extract text and images from PDF
-    pdf_extraction_time = process_pdf_with_paths(pdf_path, texts_dir, pages_dir, pages_per_process)
+    pdf_extraction_time = process_pdf_with_paths(pdf_path, texts_dir, pages_dir, pages_per_process, max_processes)
     
     # Step 2: Process page images to extract content elements with structure and OCR
     import utils
@@ -532,6 +539,7 @@ if __name__ == "__main__":
     
     target_path = "data/multimodal_test.pdf"  # Default single PDF
     pages_per_process = 1
+    max_processes = multiprocessing.cpu_count()  # Default to all available CPUs
     
     # Check command line arguments
     if len(sys.argv) > 1:
@@ -545,23 +553,52 @@ if __name__ == "__main__":
             if len(sys.argv) > 2:
                 try:
                     pages_per_process = int(sys.argv[2])
+                    if len(sys.argv) > 3:
+                        try:
+                            max_processes = int(sys.argv[3])
+                        except ValueError:
+                            print(f"Invalid value for max_processes: {sys.argv[3]}. Using default value.")
                 except ValueError:
                     print(f"Invalid value for pages_per_process: {sys.argv[2]}. Using default value of 1.")
         else:
-            # It's pages_per_process
+            # It could be pages_per_process or max_processes
             try:
-                pages_per_process = int(arg1)
+                first_num = int(arg1)
+                
+                # Second argument could be pages_per_process, max_processes, or path
+                if len(sys.argv) > 2:
+                    try:
+                        second_num = int(sys.argv[2])
+                        # Both are numbers: first is pages_per_process, second is max_processes
+                        pages_per_process = first_num
+                        max_processes = second_num
+                        
+                        # Third argument could be directory or PDF path
+                        if len(sys.argv) > 3:
+                            arg3 = sys.argv[3]
+                            if isdir(arg3):
+                                target_path = arg3
+                            elif arg3.endswith('.pdf') and ('/' in arg3 or '\\' in arg3):
+                                target_path = arg3
+                    except ValueError:
+                        # Second argument is not a number, so first is pages_per_process
+                        pages_per_process = first_num
+                        arg2 = sys.argv[2]
+                        if isdir(arg2):
+                            # Directory path
+                            target_path = arg2
+                        elif arg2.endswith('.pdf') and ('/' in arg2 or '\\' in arg2):
+                            # PDF file path
+                            target_path = arg2
+                        else:
+                            print(f"Invalid path: {arg2}. Expected directory or PDF file path.")
+                            sys.exit(1)
+                else:
+                    # Only one numeric argument provided - assume it's pages_per_process with default PDF
+                    pages_per_process = first_num
             except ValueError:
-                print(f"Invalid value for pages_per_process: {arg1}. Using default value of 1.")
-            
-            # Second argument could be pdf_path or directory
-            if len(sys.argv) > 2:
-                arg2 = sys.argv[2]
-                if isdir(arg2):
-                    # It's a directory - process all PDFs in this directory
-                    target_path = arg2
-                elif arg2.endswith('.pdf') and ('/' in arg2 or '\\' in arg2):
-                    target_path = arg2
+                print(f"Invalid argument: {arg1}. Expected directory, PDF file path, or numeric value.")
+                sys.exit(1)
     
     # Check if target_path is a directory
     if os.path.isdir(target_path):
@@ -582,7 +619,7 @@ if __name__ == "__main__":
             pdf_name = os.path.splitext(os.path.basename(pdf_file))[0]
             scratch_dir = f"scratch_{pdf_name}"
             
-            result = extract(pdf_path=pdf_file, scratch_dir=scratch_dir, timing=True, ocr_titles=False, pages_per_process=pages_per_process)
+            result = extract(pdf_path=pdf_file, scratch_dir=scratch_dir, timing=True, ocr_titles=False, pages_per_process=pages_per_process, max_processes=max_processes)
             
             # Print content summary for each PDF
             print(f"\nContent summary for {pdf_file}:")
@@ -618,7 +655,7 @@ if __name__ == "__main__":
         print(f"Processing {target_path} with {pages_per_process} pages per process")
         
         # Example usage - single PDF file
-        result = extract(pdf_path=target_path, scratch_dir="scratch", timing=True, ocr_titles=False, pages_per_process=pages_per_process)
+        result = extract(pdf_path=target_path, scratch_dir="scratch", timing=True, ocr_titles=False, pages_per_process=pages_per_process, max_processes=max_processes)
         
         # Print content summary
         print("\n" + "="*50)
