@@ -1279,13 +1279,27 @@ def get_all_extracted_content(pages_dir="pages", output_dir="page_elements"):
         'total_elements': 0
     }
     
-    # Process original page images to add to the result
+    # Determine the texts directory based on the pages directory structure
+    # In the new extraction structure, pages and texts are both subdirectories of the extraction root
+    extraction_root = os.path.dirname(pages_dir)  # This should be the extraction directory like "extracts/document_name"
+    texts_dir = os.path.join(extraction_root, "texts")
+    
+    # Process original page images and text files to add to the result
     for image_path in sorted(glob(os.path.join(pages_dir, "*.jpg")) + glob(os.path.join(pages_dir, "*.png"))):
         page_name = os.path.basename(image_path).replace('.jpg', '').replace('.png', '')
+        
+        # Look for corresponding text file in the texts directory
+        text_file_path = os.path.join(texts_dir, f"{page_name}.txt")
+        
+        page_text = ""
+        if os.path.exists(text_file_path):
+            with open(text_file_path, 'r', encoding='utf-8') as f:
+                page_text = f.read()
         
         if page_name not in result['pages']:
             result['pages'][page_name] = {
                 'original_image_path': image_path,
+                'page_text': page_text,  # Add the extracted plain text
                 'elements': []
             }
     
