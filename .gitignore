@@ -1,0 +1,22 @@
+# Output directories
+extracts/
+pages/
+page_elements/
+texts/
+__pycache__/
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+
+# Logs
+*.log
+
+# Virtual environment (if not already in parent directory)
+.venv/
+venv/
+env/

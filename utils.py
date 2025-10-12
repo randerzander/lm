@@ -308,7 +308,7 @@ def extract_ocr_text(image_path, api_key=None):
         response.raise_for_status()
 
 
-def extract_ocr_text_batch(image_paths, api_key=None, batch_size=10):
+def extract_ocr_text_batch(image_paths, api_key=None, batch_size=20):
     """
     Extract text from multiple images using NVIDIA OCR API in batches.
     
@@ -316,7 +316,7 @@ def extract_ocr_text_batch(image_paths, api_key=None, batch_size=10):
         image_paths (list): List of paths to image files
         api_key (str, optional): API key for authorization. If not provided, 
                                 assumes running in NGC environment
-        batch_size (int): Number of images to process in each batch (default: 10)
+        batch_size (int): Number of images to process in each batch (default: 20)
     
     Returns:
         list: List of JSON responses containing OCR text results for each image
@@ -434,7 +434,7 @@ def extract_graphic_elements(image_path, api_key=None):
         print(f"Graphic elements API request failed with status {response.status_code}: {response.text}")
         response.raise_for_status()
 
-def process_page_images(pages_dir="pages", output_dir="page_elements", timing=False, ocr_titles=True, batch_processing=True, batch_size=5):
+def process_page_images(pages_dir="pages", output_dir="page_elements", timing=False, ocr_titles=True, batch_processing=True, batch_size=20, pdf_extraction_time=0):
     """
     Process all page images in the specified directory, extract content elements,
     and save them in subdirectories organized by content type in JSONL format.
@@ -446,7 +446,8 @@ def process_page_images(pages_dir="pages", output_dir="page_elements", timing=Fa
         timing (bool): Whether to track and report timing for each stage
         ocr_titles (bool): Whether to perform OCR on title elements, defaults to True
         batch_processing (bool): Whether to use batch processing for API calls (default: True)
-        batch_size (int): Batch size for API calls (default: 5)
+        batch_size (int): Batch size for API calls (default: 20)
+        pdf_extraction_time (float): Time taken for PDF extraction (default: 0)
     """
     # Initialize timing variables
     if timing:
@@ -961,9 +962,9 @@ def process_page_images(pages_dir="pages", output_dir="page_elements", timing=Fa
 
     # Report timing if requested
     if timing:
-        total_time = page_elements_time + table_structure_time + chart_structure_time + ocr_time
+        total_time = pdf_extraction_time + page_elements_time + table_structure_time + chart_structure_time + ocr_time
         print(f"Timing Summary:")
-        print(f"  PDF Extraction: 0.00s (not measured in this function)")
+        print(f"  PDF Extraction: {pdf_extraction_time:.2f}s")
         print(f"  Page Elements Inference: {page_elements_time:.2f}s")
         print(f"  Table Structure: {table_structure_time:.2f}s")
         print(f"  Chart Structure: {chart_structure_time:.2f}s")
@@ -1469,3 +1470,148 @@ def save_extracted_content_to_json(result_obj, extract_dir=None, output_file="ex
     with open(output_path, "w") as f:
         json.dump(result_obj, f, indent=2)
     print(f"Extracted content saved to {output_path}")
+
+
+def save_document_markdown(result_obj, extract_dir=None, source_fn=None):
+    """
+    Creates a markdown representation of the whole document's text extracts 
+    and saves it to the extracts directory.
+    
+    Args:
+        result_obj (dict): The result object from get_all_extracted_content
+        extract_dir (str): Directory to save the markdown file. If None, uses default pattern
+        source_fn (str): Source filename without extension for naming the markdown file
+    """
+    import os
+    
+    markdown_content = []
+    
+    # Add document title
+    if source_fn:
+        markdown_content.append(f"# {source_fn}\n")
+    else:
+        markdown_content.append(f"# Document\n")
+    
+    markdown_content.append("## Document Overview\n")
+    markdown_content.append(f"- Total Pages: {len(result_obj.get('pages', {}))}")
+    markdown_content.append(f"- Total Elements: {result_obj.get('total_elements', 0)}")
+    
+    # Add content statistics
+    content_elements = result_obj.get('content_elements', {})
+    markdown_content.append(f"- Tables: {len(content_elements.get('tables', []))}")
+    markdown_content.append(f"- Charts: {len(content_elements.get('charts', []))}")
+    markdown_content.append(f"- Titles: {len(content_elements.get('titles', []))}")
+    markdown_content.append(f"- Other Elements: {len(content_elements.get('other', []))}\n")
+    
+    # Process each page in sorted order
+    pages = result_obj.get('pages', {})
+    for page_name in sorted(pages.keys(), key=lambda x: int(x.split('_')[-1]) if x.split('_')[-1].isdigit() else 0):
+        page_data = pages[page_name]
+        
+        markdown_content.append(f"## Page {page_name.replace('page_', '')}\n")
+        
+        # Add page text (from PDF extraction)
+        page_text = page_data.get('page_text', '')
+        if page_text.strip():
+            markdown_content.append("### Page Text\n")
+            markdown_content.append(f"{page_text}\n")
+        
+        # Process page elements
+        elements = page_data.get('elements', [])
+        if elements:
+            markdown_content.append("### Page Elements\n")
+            
+            for element in elements:
+                element_type = element.get('type', 'other')
+                markdown_content.append(f"#### {element_type.title()}")
+                
+                # Add content texts if available
+                content_texts = element.get('content_texts', [])
+                if content_texts:
+                    for content in content_texts:
+                        text = content.get('text', '')
+                        if text.strip():
+                            markdown_content.append(f"- {text.strip()}")
+                
+                # Add bounding box info if available
+                bounding_box = element.get('bounding_box', {})
+                if bounding_box:
+                    markdown_content.append(f"> Bounding Box: ({bounding_box.get('x_min')}, {bounding_box.get('y_min')}) to ({bounding_box.get('x_max')}, {bounding_box.get('y_max')})")
+                
+                # Add image path if available (only sub-image paths, not original page images)  
+                sub_image_path = element.get('sub_image_path')
+                if sub_image_path:
+                    # Try to make the path relative to extracts directory for proper linking
+                    rel_path = os.path.relpath(sub_image_path, extract_dir) if extract_dir else os.path.basename(sub_image_path)
+                    markdown_content.append(f"> Image: `{rel_path}`")
+                
+                markdown_content.append("")  # Extra blank line between elements
+        
+        markdown_content.append("---\n")  # Separator between pages
+    
+    # Add summary of all tables if any exist
+    tables = content_elements.get('tables', [])
+    if tables:
+        markdown_content.append("## All Tables\n")
+        for i, table in enumerate(tables, 1):
+            markdown_content.append(f"### Table {i}")
+            
+            content_texts = table.get('content_texts', [])
+            if content_texts:
+                for content in content_texts:
+                    text = content.get('text', '')
+                    if text.strip():
+                        markdown_content.append(f"- {text.strip()}")
+            
+            markdown_content.append("")
+    
+    # Add summary of all charts if any exist
+    charts = content_elements.get('charts', [])
+    if charts:
+        markdown_content.append("## All Charts\n")
+        for i, chart in enumerate(charts, 1):
+            markdown_content.append(f"### Chart {i}")
+            
+            content_texts = chart.get('content_texts', [])
+            if content_texts:
+                for content in content_texts:
+                    text = content.get('text', '')
+                    if text.strip():
+                        markdown_content.append(f"- {text.strip()}")
+            
+            markdown_content.append("")
+    
+    # Add summary of all titles if any exist
+    titles = content_elements.get('titles', [])
+    if titles:
+        markdown_content.append("## All Titles\n")
+        for i, title in enumerate(titles, 1):
+            markdown_content.append(f"### Title {i}")
+            
+            content_texts = title.get('content_texts', [])
+            if content_texts:
+                for content in content_texts:
+                    text = content.get('text', '')
+                    if text.strip():
+                        markdown_content.append(f"- {text.strip()}")
+            
+            markdown_content.append("")
+    
+    # Join all content with proper spacing
+    final_markdown = "\n".join(markdown_content)
+    
+    # Determine output path
+    if extract_dir and source_fn:
+        output_path = os.path.join(extract_dir, f"{source_fn}.md")
+    elif extract_dir:
+        # If extract_dir is provided but source_fn isn't, use a default name
+        output_path = os.path.join(extract_dir, "document.md")
+    else:
+        # If no extract_dir provided, save in current directory
+        output_path = f"{source_fn or 'document'}.md"
+    
+    # Write to file
+    with open(output_path, 'w', encoding='utf-8') as f:
+        f.write(final_markdown)
+    
+    print(f"Document markdown saved to {output_path}")

@@ -10,6 +10,8 @@ LM is a powerful tool for extracting structured content from PDF documents using
 - **OCR Integration**: Performs OCR on detected elements to extract text content
 - **Configurable Multiprocessing**: Process PDF pages in parallel with adjustable batching strategies
 - **Structured Output**: Provides content in organized JSON format with metadata and file references
+- **Markdown Generation**: Creates comprehensive markdown representations of processed documents
+- **Optimized OCR Batching**: Supports up to 20 images per OCR batch for improved performance
 
 ## Prerequisites
 
@@ -169,11 +171,37 @@ Key configuration options in `process_pdf.py`:
 - `extract_dir`: Base directory for extraction results (default: 'extracts/{source_fn}' where source_fn is the PDF filename without extension)
 - `ocr_titles`: Whether to perform OCR on title elements (default: False)
 - `timing`: Enable detailed timing reports (default: False)
+- `batch_size`: Number of images to process in each OCR batch (default: 20)
 
 Environment variables:
 - `NVIDIA_API_KEY`: Required for accessing NVIDIA AI APIs
 
 ## Output Format
+
+### Markdown Generation
+
+The tool now automatically generates comprehensive markdown representations of processed documents. When the extraction is complete, a markdown file is created at `extracts/${source_fn}.md` containing:
+
+- Document overview with statistics (total pages, elements, etc.)
+- Page-level content with extracted text from PDF pages
+- Page elements organized by type (tables, charts, titles, etc.)
+- Content texts extracted from OCR processing
+- Bounding box information for each element
+- Image paths for referenced elements
+- Summaries of all tables, charts, and titles across the document
+
+### Enhanced Timing Information
+
+The timing summary now includes PDF extraction time:
+```
+Timing Summary:
+  PDF Extraction: 0.07s
+  Page Elements Inference: 1.17s
+  Table Structure: 0.97s
+  Chart Structure: 1.54s
+  OCR: 8.78s
+  Total: 12.47s
+```
 
 The tool generates structured JSON output containing:
 

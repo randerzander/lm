@@ -334,7 +334,7 @@ def extract(pdf_path="data/multimodal_test.pdf", output_dir="page_elements", ext
     
     # Step 2: Process page images to extract content elements with structure and OCR
     import utils
-    utils.process_page_images(pages_dir=pages_dir, output_dir=elements_dir, timing=timing, ocr_titles=ocr_titles, batch_processing=True, batch_size=5)
+    utils.process_page_images(pages_dir=pages_dir, output_dir=elements_dir, timing=timing, ocr_titles=ocr_titles, batch_processing=True, batch_size=20, pdf_extraction_time=pdf_extraction_time)
     
     # Step 3: Create consolidated result object
     result = get_all_extracted_content(pages_dir=pages_dir, output_dir=elements_dir)
@@ -346,6 +346,10 @@ def extract(pdf_path="data/multimodal_test.pdf", output_dir="page_elements", ext
         print(f"Breakdown:")
         print(f"  PDF Extraction: {pdf_extraction_time:.2f}s")
         print(f"  AI Processing (Elements, Structure, OCR): {total_time - pdf_extraction_time:.2f}s")
+    
+    # Generate markdown representation of the document
+    source_fn = os.path.splitext(os.path.basename(pdf_path))[0] if pdf_path else None
+    utils.save_document_markdown(result, extract_dir=extract_dir, source_fn=source_fn)
     
     return result
 
