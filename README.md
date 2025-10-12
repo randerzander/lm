@@ -12,6 +12,9 @@ LM is a powerful tool for extracting structured content from PDF documents using
 - **Structured Output**: Provides content in organized JSON format with metadata and file references
 - **Markdown Generation**: Creates comprehensive markdown representations of processed documents
 - **Optimized OCR Batching**: Supports up to 20 images per OCR batch for improved performance
+- **Semantic Embeddings**: Generates page-level embeddings for semantic search and retrieval
+- **LanceDB Integration**: Stores content in queryable vector database with semantic search capabilities
+- **Query Interface**: Command-line interface for asking questions about processed documents
 
 ## Prerequisites
 
@@ -105,6 +108,23 @@ python process_pdf.py 2 8
 python process_pdf.py 10
 ```
 
+#### Query Documents
+
+After processing documents and storing them in LanceDB, you can query them using the query script:
+
+```bash
+# Query specific document (source document is required)
+python query.py --source-document multimodal_test "What is the main topic of the document?"
+
+# Query with specific database path (overrides default path)
+python query.py --db-path /path/to/lancedb --source-document my_document "Your question here"
+
+# Query with custom number of results to retrieve
+python query.py --source-document multimodal_test --limit 10 "Your question here"
+```
+
+The source document parameter is required and should match the name of the processed document (the directory name in extracts/).
+
 ### Directory Structure
 
 ```
@@ -114,8 +134,12 @@ lm/
 │   ├── {source_fn}/      # Extraction results for a specific document (e.g., my_document/)
 │   │   ├── texts/        # Extracted text from PDF pages
 │   │   ├── pages/        # Rendered page images
-│   │   └── page_elements/ # Detected content elements
+│   │   ├── page_elements/ # Detected content elements
+│   │   ├── {source_fn}.md # Markdown representation of document
+│   │   ├── {source_fn}_embeddings.json # Embeddings for document pages
+│   │   └── lancedb/      # LanceDB database with queryable content
 ├── process_pdf.py        # Main processing script
+├── query.py              # Query script for asking questions about processed documents
 ├── utils.py             # Utility functions
 └── requirements.txt      # Python dependencies
 ```
@@ -190,9 +214,30 @@ The tool now automatically generates comprehensive markdown representations of p
 - Image paths for referenced elements
 - Summaries of all tables, charts, and titles across the document
 
+### Embedding Generation
+
+The tool now generates embeddings for each page of the document using NVIDIA's embedding model (`nvidia/llama-3.2-nemoretriever-1b-vlm-embed-v1`). After markdown generation is complete, embeddings are created for each page separately. The output includes:
+
+- **Embeddings JSON**: A JSON file at `extracts/${source_fn}_embeddings.json` containing:
+  - Page index
+  - Page content
+  - Embedding vector
+- Each page is treated as a separate embedding chunk, enabling semantic search at the page level
+- Embeddings are generated using the NVIDIA API with appropriate input parameters
+
+### LanceDB Integration
+
+The tool now integrates with LanceDB for queryable storage of extracted content. After embeddings are generated, all content is stored in a LanceDB table with the following features:
+
+- **Queryable Storage**: Content is stored in a LanceDB table for efficient retrieval and querying
+- **Table Structure**: Each document gets its own table named `{source_fn}_pages` with columns for page index, content, embedding vector, source document, and content length
+- **Vector Search**: Embeddings are stored alongside content for semantic search capabilities
+- **Database Location**: LanceDB database is created at `extracts/{source_fn}/lancedb/`
+- **Automatic Indexing**: Content is automatically indexed for fast retrieval
+
 ### Enhanced Timing Information
 
-The timing summary now includes PDF extraction time:
+The timing summary now includes PDF extraction time and new stages:
 ```
 Timing Summary:
   PDF Extraction: 0.07s
@@ -200,7 +245,9 @@ Timing Summary:
   Table Structure: 0.97s
   Chart Structure: 1.54s
   OCR: 8.78s
-  Total: 12.47s
+  Embedding Generation: 2.35s
+  LanceDB Indexing: 0.42s
+  Total: 15.20s
 ```
 
 The tool generates structured JSON output containing:

@@ -334,10 +334,31 @@ def extract(pdf_path="data/multimodal_test.pdf", output_dir="page_elements", ext
     
     # Step 2: Process page images to extract content elements with structure and OCR
     import utils
+    ai_start_time = time.time()
     utils.process_page_images(pages_dir=pages_dir, output_dir=elements_dir, timing=timing, ocr_titles=ocr_titles, batch_processing=True, batch_size=20, pdf_extraction_time=pdf_extraction_time)
+    ai_processing_time = time.time() - ai_start_time
     
     # Step 3: Create consolidated result object
     result = get_all_extracted_content(pages_dir=pages_dir, output_dir=elements_dir)
+    
+    # Generate markdown representation of the document
+    source_fn = os.path.splitext(os.path.basename(pdf_path))[0] if pdf_path else None
+    utils.save_document_markdown(result, extract_dir=extract_dir, source_fn=source_fn)
+    
+    # Initialize timing variables for new stages
+    embeddings_time = 0
+    lancedb_time = 0
+    
+    # Generate embeddings for the markdown content
+    if extract_dir and source_fn:
+        markdown_path = os.path.join(extract_dir, f"{source_fn}.md")
+        if os.path.exists(markdown_path):
+            embedding_results, embeddings_time = utils.generate_embeddings_for_markdown(markdown_path)
+            if embedding_results:
+                utils.save_embeddings_to_json(embedding_results, extract_dir=extract_dir, source_fn=source_fn)
+                
+                # Save embeddings to LanceDB for queryable storage
+                _, lancedb_time = utils.save_to_lancedb(embedding_results, extract_dir=extract_dir, source_fn=source_fn)
     
     # Report timing if requested
     if timing:
@@ -345,11 +366,9 @@ def extract(pdf_path="data/multimodal_test.pdf", output_dir="page_elements", ext
         print(f"Overall processing completed in {total_time:.2f} seconds")
         print(f"Breakdown:")
         print(f"  PDF Extraction: {pdf_extraction_time:.2f}s")
-        print(f"  AI Processing (Elements, Structure, OCR): {total_time - pdf_extraction_time:.2f}s")
-    
-    # Generate markdown representation of the document
-    source_fn = os.path.splitext(os.path.basename(pdf_path))[0] if pdf_path else None
-    utils.save_document_markdown(result, extract_dir=extract_dir, source_fn=source_fn)
+        print(f"  AI Processing (Elements, Structure, OCR): {ai_processing_time:.2f}s")
+        print(f"  Embedding Generation: {embeddings_time:.2f}s")
+        print(f"  LanceDB Indexing: {lancedb_time:.2f}s")
     
     return result
 

@@ -1483,6 +1483,206 @@ def save_document_markdown(result_obj, extract_dir=None, source_fn=None):
         source_fn (str): Source filename without extension for naming the markdown file
     """
     import os
+
+
+def generate_embeddings_for_markdown(markdown_file_path, api_key=None):
+    """
+    Generate embeddings for a markdown file, splitting content by page boundaries.
+    Each page becomes a separate embedding chunk.
+
+    Args:
+        markdown_file_path (str): Path to the markdown file to process
+        api_key (str): API key for NVIDIA embedding service. If not provided, 
+                      will try to get from environment variable NVIDIA_API_KEY
+
+    Returns:
+        tuple: A tuple containing (results list, total time in seconds)
+    """
+    import os
+    from openai import OpenAI
+    import time
+    
+    start_time = time.time()
+    
+    # Set up API key
+    if api_key is None:
+        api_key = os.getenv("NVIDIA_API_KEY")
+        if not api_key:
+            print("NVIDIA_API_KEY environment variable not set. Skipping embeddings generation.")
+            return [], 0.0
+    
+    # Initialize the client
+    client = OpenAI(
+        api_key=api_key,
+        base_url="https://integrate.api.nvidia.com/v1"
+    )
+
+    # Read the markdown file
+    with open(markdown_file_path, 'r', encoding='utf-8') as f:
+        content = f.read()
+
+    # Split content by page separators (--- followed by a newline, which was added in save_document_markdown)
+    sections = content.split('---\n')
+    
+    results = []
+    
+    for i, section in enumerate(sections):
+        section = section.strip()
+        if not section:
+            continue
+            
+        # Skip the header sections if they're not actual page content
+        if section.startswith('# ') or section.startswith('## Document Overview'):
+            continue
+            
+        try:
+            # Generate embedding for this page section
+            response = client.embeddings.create(
+                input=[section],
+                model="nvidia/llama-3.2-nemoretriever-1b-vlm-embed-v1",
+                encoding_format="float",
+                extra_body={"modality": ["text"], "input_type": "query", "truncate": "NONE"}
+            )
+            
+            embedding = response.data[0].embedding
+            
+            results.append({
+                'page_index': i,
+                'content': section,
+                'embedding': embedding
+            })
+            
+            print(f"Generated embedding for page {i} (length: {len(section)} chars)")
+            
+        except Exception as e:
+            print(f"Error generating embedding for page {i}: {str(e)}")
+            results.append({
+                'page_index': i,
+                'content': section,
+                'embedding': None,
+                'error': str(e)
+            })
+    
+    total_time = time.time() - start_time
+    print(f"Embedding generation completed in {total_time:.2f} seconds")
+    
+    return results, total_time
+
+
+def save_embeddings_to_json(embedding_results, extract_dir=None, source_fn=None):
+    """
+    Save embedding results to a JSON file in the extracts directory.
+
+    Args:
+        embedding_results (list): List of embedding results from generate_embeddings_for_markdown
+        extract_dir (str): Directory to save the embeddings file. If None, uses default pattern
+        source_fn (str): Source filename without extension for naming the embeddings file
+    """
+    import json
+    import os
+    
+    # Determine output path
+    if extract_dir and source_fn:
+        output_path = os.path.join(extract_dir, f"{source_fn}_embeddings.json")
+    elif extract_dir:
+        # If extract_dir is provided but source_fn isn't, use a default name
+        output_path = os.path.join(extract_dir, "document_embeddings.json")
+    else:
+        # If no extract_dir provided, save in current directory
+        output_path = f"{source_fn or 'document'}_embeddings.json"
+    
+    # Write to file
+    with open(output_path, 'w', encoding='utf-8') as f:
+        json.dump(embedding_results, f, indent=2)
+    
+    print(f"Embeddings saved to {output_path}")
+
+
+def save_to_lancedb(embedding_results, extract_dir=None, source_fn=None):
+    """
+    Save embedding results to a LanceDB table for queryable storage.
+
+    Args:
+        embedding_results (list): List of embedding results from generate_embeddings_for_markdown
+        extract_dir (str): Directory to save the LanceDB database. If None, uses default pattern
+        source_fn (str): Source filename without extension for naming the database
+    """
+    import lancedb
+    import os
+    import pyarrow as pa
+    import time
+    
+    start_time = time.time()
+    
+    try:
+        # Determine database path
+        if extract_dir:
+            db_path = os.path.join(extract_dir, "lancedb")
+        else:
+            db_path = "./lancedb"
+        
+        # Connect to LanceDB
+        db = lancedb.connect(db_path)
+        
+        # Prepare data for insertion
+        # Only include results that have successful embeddings
+        valid_results = [r for r in embedding_results if r.get('embedding') is not None]
+        
+        if not valid_results:
+            print("No valid embeddings to store in LanceDB")
+            indexing_time = time.time() - start_time
+            return None, indexing_time
+        
+        # Create schema for the table
+        # Using PyArrow schema to define table structure
+        schema = pa.schema([
+            pa.field("page_index", pa.int32()),
+            pa.field("content", pa.string()),
+            pa.field("embedding", pa.list_(pa.float32())),  # Embedding vector
+            pa.field("source_document", pa.string()),      # Name of the source document
+            pa.field("page_content_length", pa.int32())    # Length of content for metadata
+        ])
+        
+        # Prepare data for insertion
+        data = []
+        for result in valid_results:
+            data.append({
+                "page_index": result["page_index"],
+                "content": result["content"],
+                "embedding": result["embedding"],
+                "source_document": source_fn or "unknown",
+                "page_content_length": len(result["content"])
+            })
+        
+        # Convert to PyArrow table
+        table_data = pa.Table.from_pylist(data, schema=schema)
+        
+        # Create or overwrite the table
+        table_name = f"{source_fn}_pages" if source_fn else "document_pages"
+        
+        if table_name in db.table_names():
+            # If table exists, open it and add the new data
+            table = db.open_table(table_name)
+            table.add(table_data)
+        else:
+            # Create new table
+            table = db.create_table(table_name, table_data)
+        
+        indexing_time = time.time() - start_time
+        print(f"Successfully saved {len(valid_results)} embeddings to LanceDB table '{table_name}' in {db_path}")
+        print(f"LanceDB table has {table.count_rows()} total rows")
+        print(f"LanceDB indexing completed in {indexing_time:.2f} seconds")
+        
+        return table_name, indexing_time
+        
+    except ImportError:
+        print("LanceDB not installed. Install with: pip install lancedb")
+        indexing_time = time.time() - start_time
+        return None, indexing_time
+    except Exception as e:
+        print(f"Error saving to LanceDB: {str(e)}")
+        indexing_time = time.time() - start_time
+        return None, indexing_time
     
     markdown_content = []
     

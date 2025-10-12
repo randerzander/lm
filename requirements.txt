@@ -1,3 +1,5 @@
 pypdfium2
 Pillow
 requests
+openai
+lancedb
