@@ -163,7 +163,6 @@ def main():
         # Suggest available documents if the extracts directory exists
         extracts_dir = "./extracts"
         if os.path.exists(extracts_dir):
-            import os
             available_docs = [d for d in os.listdir(extracts_dir) 
                              if os.path.isdir(os.path.join(extracts_dir, d)) 
                              and os.path.exists(os.path.join(extracts_dir, d, "lancedb"))]
