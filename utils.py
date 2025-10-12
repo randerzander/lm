@@ -1483,6 +1483,138 @@ def save_document_markdown(result_obj, extract_dir=None, source_fn=None):
         source_fn (str): Source filename without extension for naming the markdown file
     """
     import os
+    
+    markdown_content = []
+    
+    # Add document title
+    if source_fn:
+        markdown_content.append(f"# {source_fn}\n")
+    else:
+        markdown_content.append(f"# Document\n")
+    
+    markdown_content.append("## Document Overview\n")
+    markdown_content.append(f"- Total Pages: {len(result_obj.get('pages', {}))}")
+    markdown_content.append(f"- Total Elements: {result_obj.get('total_elements', 0)}")
+    
+    # Add content statistics
+    content_elements = result_obj.get('content_elements', {})
+    markdown_content.append(f"- Tables: {len(content_elements.get('tables', []))}")
+    markdown_content.append(f"- Charts: {len(content_elements.get('charts', []))}")
+    markdown_content.append(f"- Titles: {len(content_elements.get('titles', []))}")
+    markdown_content.append(f"- Other Elements: {len(content_elements.get('other', []))}\n")
+    
+    # Process each page in sorted order
+    pages = result_obj.get('pages', {})
+    for page_name in sorted(pages.keys(), key=lambda x: int(x.split('_')[-1]) if x.split('_')[-1].isdigit() else 0):
+        page_data = pages[page_name]
+        
+        markdown_content.append(f"## Page {page_name.replace('page_', '')}\n")
+        
+        # Add page text (from PDF extraction)
+        page_text = page_data.get('page_text', '')
+        if page_text.strip():
+            markdown_content.append("### Page Text\n")
+            markdown_content.append(f"{page_text}\n")
+        
+        # Process page elements
+        elements = page_data.get('elements', [])
+        if elements:
+            markdown_content.append("### Page Elements\n")
+            
+            for element in elements:
+                element_type = element.get('type', 'other')
+                markdown_content.append(f"#### {element_type.title()}")
+                
+                # Add content texts if available
+                content_texts = element.get('content_texts', [])
+                if content_texts:
+                    for content in content_texts:
+                        text = content.get('text', '')
+                        if text.strip():
+                            markdown_content.append(f"- {text.strip()}")
+                
+                # Add bounding box info if available
+                bounding_box = element.get('bounding_box', {})
+                if bounding_box:
+                    markdown_content.append(f"> Bounding Box: ({bounding_box.get('x_min')}, {bounding_box.get('y_min')}) to ({bounding_box.get('x_max')}, {bounding_box.get('y_max')})")
+                
+                # Add image path if available (only sub-image paths, not original page images)  
+                sub_image_path = element.get('sub_image_path')
+                if sub_image_path:
+                    # Try to make the path relative to extracts directory for proper linking
+                    rel_path = os.path.relpath(sub_image_path, extract_dir) if extract_dir else os.path.basename(sub_image_path)
+                    markdown_content.append(f"> Image: `{rel_path}`")
+                
+                markdown_content.append("")  # Extra blank line between elements
+        
+        markdown_content.append("---\n")  # Separator between pages
+    
+    # Add summary of all tables if any exist
+    tables = content_elements.get('tables', [])
+    if tables:
+        markdown_content.append("## All Tables\n")
+        for i, table in enumerate(tables, 1):
+            markdown_content.append(f"### Table {i}")
+            
+            content_texts = table.get('content_texts', [])
+            if content_texts:
+                for content in content_texts:
+                    text = content.get('text', '')
+                    if text.strip():
+                        markdown_content.append(f"- {text.strip()}")
+            
+            markdown_content.append("")
+    
+    # Add summary of all charts if any exist
+    charts = content_elements.get('charts', [])
+    if charts:
+        markdown_content.append("## All Charts\n")
+        for i, chart in enumerate(charts, 1):
+            markdown_content.append(f"### Chart {i}")
+            
+            content_texts = chart.get('content_texts', [])
+            if content_texts:
+                for content in content_texts:
+                    text = content.get('text', '')
+                    if text.strip():
+                        markdown_content.append(f"- {text.strip()}")
+            
+            markdown_content.append("")
+    
+    # Add summary of all titles if any exist
+    titles = content_elements.get('titles', [])
+    if titles:
+        markdown_content.append("## All Titles\n")
+        for i, title in enumerate(titles, 1):
+            markdown_content.append(f"### Title {i}")
+            
+            content_texts = title.get('content_texts', [])
+            if content_texts:
+                for content in content_texts:
+                    text = content.get('text', '')
+                    if text.strip():
+                        markdown_content.append(f"- {text.strip()}")
+            
+            markdown_content.append("")
+    
+    # Join all content with proper spacing
+    final_markdown = "\n".join(markdown_content)
+    
+    # Determine output path
+    if extract_dir and source_fn:
+        output_path = os.path.join(extract_dir, f"{source_fn}.md")
+    elif extract_dir:
+        # If extract_dir is provided but source_fn isn't, use a default name
+        output_path = os.path.join(extract_dir, "document.md")
+    else:
+        # If no extract_dir provided, save in current directory
+        output_path = f"{source_fn or 'document'}.md"
+    
+    # Write to file
+    with open(output_path, 'w', encoding='utf-8') as f:
+        f.write(final_markdown)
+    
+    print(f"Document markdown saved to {output_path}")
 
 
 def generate_embeddings_for_markdown(markdown_file_path, api_key=None):
