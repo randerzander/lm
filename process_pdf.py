@@ -31,7 +31,7 @@ def process_pages_batch(pdf_path, page_nums, texts_dir, pages_dir):
                 page = pdf.get_page(page_num)
                 
                 # Extract text from the page
-                text = page.get_textpage().get_text_range()
+                text = page.get_textpage().get_text_bounded()
                 
                 # Save the text to a file
                 text_filename = os.path.join(texts_dir, f"page_{page_num+1:03d}.txt")
@@ -108,7 +108,7 @@ def process_pdf_with_paths_multiprocessing(pdf_path, texts_dir, pages_dir, pages
             page = pdf.get_page(i)
             
             # Extract text from the page
-            text = page.get_textpage().get_text_range()
+            text = page.get_textpage().get_text_bounded()
             
             # Save the text to a file
             text_filename = os.path.join(texts_dir, f"page_{i+1:03d}.txt")
@@ -204,7 +204,7 @@ def process_pdf_with_paths_sequential(pdf_path, texts_dir, pages_dir):
         page = pdf.get_page(i)
         
         # Extract text from the page
-        text = page.get_textpage().get_text_range()
+        text = page.get_textpage().get_text_bounded()
         
         # Save the text to a file
         text_filename = os.path.join(texts_dir, f"page_{i+1:03d}.txt")
@@ -254,7 +254,7 @@ def process_pdf(pdf_path):
         page = pdf.get_page(i)
         
         # Extract text from the page
-        text = page.get_textpage().get_text_range()
+        text = page.get_textpage().get_text_bounded()
         
         # Save the text to a file
         text_filename = f"texts/page_{i+1:03d}.txt"
