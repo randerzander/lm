@@ -113,17 +113,60 @@ python process_pdf.py 10
 After processing documents and storing them in LanceDB, you can query them using the query script:
 
 ```bash
-# Query specific document (source document is required)
+# Query across all documents (no source document required)
+python query.py "What is the main topic of the documents?"
+
+# Query specific document
 python query.py --source-document multimodal_test "What is the main topic of the document?"
 
 # Query with specific database path (overrides default path)
-python query.py --db-path /path/to/lancedb --source-document my_document "Your question here"
+python query.py --db-path /path/to/lancedb "Your question here"
+
+# Query specific document (optional - searches all documents by default)
+python query.py --source-document my_document "Your question here"
 
 # Query with custom number of results to retrieve
+python query.py --limit 10 "Your question here"
+
+# Query with custom number of results to retrieve in specific document
 python query.py --source-document multimodal_test --limit 10 "Your question here"
 ```
 
-The source document parameter is required and should match the name of the processed document (the directory name in extracts/).
+The source document parameter is optional - queries will search across all documents by default, or can be limited to a specific document if specified.
+
+### Example Query Result
+
+Here's an example of a query result that demonstrates the system's ability to analyze content and draw logical conclusions:
+
+```bash
+python query.py "What is each animal doing? Therefore, which animal is most likely responsible for the typos in the document? You must pick one"
+```
+
+**Result:**
+```
+Okay, let's tackle this question. The user is asking two parts: first, what each animal is doing, and second, which animal is most likely responsible for the typos in the document. They want me to pick one animal.
+
+Looking at the context provided, there's Table 2 which lists animals and activities. The animals mentioned are Dog, Cat, Lion, Giraffe. The activities include things like "Chasing a squirrel," "Putting on sunscreen," "Driving a car," etc. 
+
+So for the first part, each animal's activity is listed in Table 2. Dog is chasing a squirrel, Cat might be in a home office or jumping onto a laptop, Lion and Giraffe are just listed as animals without specific activities. Wait, the table says "Animal" and "table describes some animals, and some activities they might be doing in specific cations." So maybe each animal has an associated activity. Let me check again.
+
+In Table 2, under "Animal," there's Dog, Cat, Lion, Giraffe. The activities listed are "Chasing a squirrel," "In a home office," "Putting on sunscreen," "Driving a car." So Dog is chasing a squirrel, Cat is in a home office or maybe jumping onto a laptop (since "Jumping onto a laptop" is an activity listed). Lion and Giraffe don't have specific activities mentioned. 
+
+Now, the second part is about typos. The document has some typos like "Ranqe" instead of "Range," "Midwoofe" instead of "Midwoofer," "Prem um des k fa" which seems like a garbled text. The user is asking which animal is most likely responsible. 
+
+Looking at the activities, the Cat is "Jumping onto a laptop." If a cat is on a laptop, maybe it's causing typos by walking on the keyboard. That's a common joke or scenario where a cat's paws could accidentally press keys, leading to typos. The other animals' activities don't seem to involve interacting with a keyboard. The Dog is chasing a squirrel, which wouldn't affect typing. Lion and Giraffe aren't mentioned in activities that involve typing. 
+
+So the Cat, being on a laptop, is the most likely culprit for typos. The typos in the document might be due to the cat's actions. Therefore, the answer should be the Cat.
+The animals and their activities from Table 2 are:  
+- **Dog**: Chasing a squirrel.  
+- **Cat**: In a home office or jumping onto a laptop (implied by "Jumping onto a laptop" activity).  
+- **Lion**: No specific activity listed.  
+- **Giraffe**: No specific activity listed.  
+
+The **Cat** is most likely responsible for the typos, as "Jumping onto a laptop" could cause accidental keystrokes or disruptions while typing.
+```
+
+This example demonstrates how the system can intelligently analyze document content and make logical inferences based on the extracted text and structure.
 
 ### Directory Structure
 
