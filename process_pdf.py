@@ -652,6 +652,10 @@ if __name__ == "__main__":
                 print(f"    Characters: {stats['text_stats']['chars']}")
                 print(f"    Lines: {stats['text_stats']['lines']}")
             
+            # Save the result to a JSON file in the extraction directory
+            from utils import save_extracted_content_to_json
+            save_extracted_content_to_json(result, extract_dir=extract_dir)
+            
             print(f"\nExtraction completed for {pdf_file}! Total elements found: {content_counts['total_elements']}")
         
         print(f"\nCompleted processing all {len(pdf_files)} PDF files in {target_path}")
@@ -703,8 +707,8 @@ if __name__ == "__main__":
             print(f"    Characters: {page_stats['text_stats']['chars']}")
             print(f"    Lines: {page_stats['text_stats']['lines']}")
         
-        # Save the result to a JSON file
+        # Save the result to a JSON file in the extraction directory
         from utils import save_extracted_content_to_json
-        save_extracted_content_to_json(result)
+        save_extracted_content_to_json(result, extract_dir=output_dir)
         
         print("\nExtraction completed! Total elements found:", content_counts['total_elements'])

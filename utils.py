@@ -1438,14 +1438,20 @@ def get_all_extracted_content(pages_dir="pages", output_dir="page_elements"):
     
     return result
 
-def save_extracted_content_to_json(result_obj, output_file="extracted_content.json"):
+def save_extracted_content_to_json(result_obj, extract_dir=None, output_file="extracted_content.json"):
     """
     Save the extracted content result object to a JSON file.
     
     Args:
         result_obj (dict): The result object from get_all_extracted_content
-        output_file (str): Output file path
+        extract_dir (str): Directory to save the JSON file. If None, saves in current directory
+        output_file (str): Output file name (default: "extracted_content.json")
     """
-    with open(output_file, "w") as f:
+    if extract_dir:
+        output_path = os.path.join(extract_dir, output_file)
+    else:
+        output_path = output_file
+    
+    with open(output_path, "w") as f:
         json.dump(result_obj, f, indent=2)
-    print(f"Extracted content saved to {output_file}")
+    print(f"Extracted content saved to {output_path}")
