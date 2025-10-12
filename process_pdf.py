@@ -620,20 +620,20 @@ if __name__ == "__main__":
         for i, pdf_file in enumerate(pdf_files):
             print(f"\nProcessing PDF {i+1}/{len(pdf_files)}: {pdf_file}")
             
-            # Create a unique scratch directory for each PDF to avoid conflicts
+            # Create a unique extract directory for each PDF following the new structure
             pdf_name = os.path.splitext(os.path.basename(pdf_file))[0]
-            scratch_dir = f"scratch_{pdf_name}"
+            extract_dir = os.path.join("extracts", pdf_name)
             
-            result = extract(pdf_path=pdf_file, extract_dir=scratch_dir, timing=True, ocr_titles=False, pages_per_process=pages_per_process, max_processes=max_processes)
+            result = extract(pdf_path=pdf_file, extract_dir=extract_dir, timing=True, ocr_titles=False, pages_per_process=pages_per_process, max_processes=max_processes)
             
             # Print content summary for each PDF
             print(f"\nContent summary for {pdf_file}:")
             print("="*50)
-            print_content_summary(f"{scratch_dir}/page_elements")
+            print_content_summary(f"{extract_dir}/page_elements")
             
             # Print detailed content statistics
             from utils import get_content_counts_with_text_stats
-            content_counts = get_content_counts_with_text_stats(f"{scratch_dir}/page_elements")
+            content_counts = get_content_counts_with_text_stats(f"{extract_dir}/page_elements")
             
             print(f"\nDetailed Content Statistics for {pdf_file}:")
             print("="*50)
@@ -660,9 +660,10 @@ if __name__ == "__main__":
         print(f"Processing {target_path} with {pages_per_process} pages per process")
         
         # Example usage - single PDF file
+        # When no extract_dir is specified, the extract function will use the default "extracts/{source_fn}" structure
         result = extract(pdf_path=target_path, timing=True, ocr_titles=False, pages_per_process=pages_per_process, max_processes=max_processes)
         
-        # Determine the output directory based on the default naming
+        # The output will automatically be in the "extracts/{source_fn}" directory
         source_fn = os.path.splitext(os.path.basename(target_path))[0]
         output_dir = os.path.join("extracts", source_fn)
         
