@@ -289,7 +289,7 @@ def process_pdf(pdf_path):
     return pdf_extraction_time
 
 
-def extract(pdf_path="data/multimodal_test.pdf", output_dir="page_elements", extract_dir=None, timing=False, ocr_titles=False, pages_per_process=1, max_processes=None):
+def extract(pdf_path="data/multimodal_test.pdf", output_dir="page_elements", extract_dir=None, timing=False, ocr_titles=True, pages_per_process=1, max_processes=None):
     """
     Complete extraction function that processes a PDF and returns a consolidated result object
     containing all extracted content with texts, filepaths to related images on disk, and bounding boxes.
@@ -299,7 +299,7 @@ def extract(pdf_path="data/multimodal_test.pdf", output_dir="page_elements", ext
         output_dir (str): Output directory for extracted elements (relative to extract_dir)
         extract_dir (str): Base directory for extraction results, defaults to 'extracts/{source_fn}' where source_fn is the PDF filename without extension
         timing (bool): Whether to track and report timing for each stage
-        ocr_titles (bool): Whether to perform OCR on title elements, defaults to False
+        ocr_titles (bool): Whether to perform OCR on title elements, defaults to True
         pages_per_process (int): Number of pages to process in each process (default: 1)
         max_processes (int): Maximum number of processes to use (default: None, which uses system CPU count)
         
@@ -624,7 +624,7 @@ if __name__ == "__main__":
             pdf_name = os.path.splitext(os.path.basename(pdf_file))[0]
             extract_dir = os.path.join("extracts", pdf_name)
             
-            result = extract(pdf_path=pdf_file, extract_dir=extract_dir, timing=True, ocr_titles=False, pages_per_process=pages_per_process, max_processes=max_processes)
+            result = extract(pdf_path=pdf_file, extract_dir=extract_dir, timing=True, pages_per_process=pages_per_process, max_processes=max_processes)
             
             # Print content summary for each PDF
             print(f"\nContent summary for {pdf_file}:")
@@ -665,7 +665,7 @@ if __name__ == "__main__":
         
         # Example usage - single PDF file
         # When no extract_dir is specified, the extract function will use the default "extracts/{source_fn}" structure
-        result = extract(pdf_path=target_path, timing=True, ocr_titles=False, pages_per_process=pages_per_process, max_processes=max_processes)
+        result = extract(pdf_path=target_path, timing=True, pages_per_process=pages_per_process, max_processes=max_processes)
         
         # The output will automatically be in the "extracts/{source_fn}" directory
         source_fn = os.path.splitext(os.path.basename(target_path))[0]

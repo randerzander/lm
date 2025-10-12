@@ -434,7 +434,7 @@ def extract_graphic_elements(image_path, api_key=None):
         print(f"Graphic elements API request failed with status {response.status_code}: {response.text}")
         response.raise_for_status()
 
-def process_page_images(pages_dir="pages", output_dir="page_elements", timing=False, ocr_titles=False, batch_processing=True, batch_size=5):
+def process_page_images(pages_dir="pages", output_dir="page_elements", timing=False, ocr_titles=True, batch_processing=True, batch_size=5):
     """
     Process all page images in the specified directory, extract content elements,
     and save them in subdirectories organized by content type in JSONL format.
@@ -444,7 +444,7 @@ def process_page_images(pages_dir="pages", output_dir="page_elements", timing=Fa
         pages_dir (str): Directory containing page images
         output_dir (str): Output directory for extracted elements
         timing (bool): Whether to track and report timing for each stage
-        ocr_titles (bool): Whether to perform OCR on title elements
+        ocr_titles (bool): Whether to perform OCR on title elements, defaults to True
         batch_processing (bool): Whether to use batch processing for API calls (default: True)
         batch_size (int): Batch size for API calls (default: 5)
     """
