@@ -513,17 +513,10 @@ def print_content_summary(output_dir="page_elements"):
     # Print summary
     print("Content Summary:")
     print("================")
-    for content_type, count in content_type_counts.items():
-        print(f"{content_type}: {count} elements")
-    print(f"\nTotal elements: {total_elements}")
-    
+    content_str = ", ".join([f"{content_type}s: {count}" for content_type, count in content_type_counts.items()])
     # Get text statistics
     text_stats = get_text_stats(output_dir)
-    print(f"\nText Statistics:")
-    print("================")
-    print(f"Words: {text_stats['text_stats']['words']}")
-    print(f"Characters: {text_stats['text_stats']['chars']}")
-    print(f"Lines: {text_stats['text_stats']['lines']}")
+    print(f"{content_str} | Total elements: {total_elements}, Words: {text_stats['text_stats']['words']}, Characters: {text_stats['text_stats']['chars']}, Lines: {text_stats['text_stats']['lines']}")
     
     # Count inference requests
     for content_type_dir in glob.glob(os.path.join(output_dir, "*")):
@@ -555,7 +548,7 @@ def print_content_summary(output_dir="page_elements"):
                                 # Other content types (likely figures, equations, etc.)
                                 total_inference_requests += 1
     
-    print(f"\nTotal inference requests: {total_inference_requests}")
+
 
 
 if __name__ == "__main__":
@@ -755,19 +748,10 @@ if __name__ == "__main__":
             from utils import get_content_counts_with_text_stats
             content_counts = get_content_counts_with_text_stats(f"{extract_dir}/page_elements")
             
-            print(f"\nDetailed Content Statistics for {pdf_file}:")
-            print("="*50)
-            print(f"Total Elements: {content_counts['total_elements']}")
-            print(f"Total Inference Requests: {content_counts['total_inference_requests']}")
-            print(f"Total Words: {content_counts['total_text_stats']['words']}")
-            print(f"Total Characters: {content_counts['total_text_stats']['chars']}")
-            print(f"Total Lines: {content_counts['total_text_stats']['lines']}")
-            
             print(f"\nContent Type Breakdown:")
             for content_type, stats in content_counts['content_type_breakdown'].items():
                 print(f"  {content_type}:")
                 print(f"    Elements: {stats['total_elements']}")
-                print(f"    Inference Requests: {stats['inference_requests']}")
                 print(f"    Words: {stats['text_stats']['words']}")
                 print(f"    Characters: {stats['text_stats']['chars']}")
                 print(f"    Lines: {stats['text_stats']['lines']}")
@@ -799,33 +783,10 @@ if __name__ == "__main__":
         from utils import get_content_counts_with_text_stats
         content_counts = get_content_counts_with_text_stats(f"{output_dir}/page_elements")
         
-        print(f"\nDetailed Content Statistics:")
-        print("="*50)
-        print(f"Total Elements: {content_counts['total_elements']}")
-        print(f"Total Inference Requests: {content_counts['total_inference_requests']}")
-        print(f"Total Words: {content_counts['total_text_stats']['words']}")
-        print(f"Total Characters: {content_counts['total_text_stats']['chars']}")
-        print(f"Total Lines: {content_counts['total_text_stats']['lines']}")
-        
-        print(f"\nContent Type Breakdown:")
-        for content_type, stats in content_counts['content_type_breakdown'].items():
-            print(f"  {content_type}:")
-            print(f"    Elements: {stats['total_elements']}")
-            print(f"    Inference Requests: {stats['inference_requests']}")
-            print(f"    Words: {stats['text_stats']['words']}")
-            print(f"    Characters: {stats['text_stats']['chars']}")
-            print(f"    Lines: {stats['text_stats']['lines']}")
-        print()
-        
         print("Per-Page Breakdown:")
         for page_name, page_stats in content_counts['pages'].items():
-            print(f"  {page_name}:")
-            for content_type, count in page_stats['content_types'].items():
-                print(f"    {content_type}: {count} elements")
-            print(f"    Inference requests: {page_stats['inference_requests']}")
-            print(f"    Words: {page_stats['text_stats']['words']}")
-            print(f"    Characters: {page_stats['text_stats']['chars']}")
-            print(f"    Lines: {page_stats['text_stats']['lines']}")
+            content_str = ", ".join([f"{content_type}s: {count}" for content_type, count in page_stats['content_types'].items()])
+            print(f"  {page_name}: {content_str} | Words: {page_stats['text_stats']['words']}, Characters: {page_stats['text_stats']['chars']}, Lines: {page_stats['text_stats']['lines']}")
         
         # Save the result to a JSON file in the extraction directory
         from utils import save_extracted_content_to_json

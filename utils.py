@@ -665,8 +665,7 @@ def process_page_images(pages_dir="pages", output_dir="page_elements", timing=Fa
                             print(f"No data found in response for {img_path}")
                             continue
                         
-                        # Print the result structure for debugging
-                        print(f"API response structure: {list(batch_result.keys()) if isinstance(batch_result, dict) else type(batch_result)}")
+
                         
                         if 'bounding_boxes' in page_data:
                             bounding_boxes = page_data['bounding_boxes']
@@ -870,8 +869,7 @@ def process_page_images(pages_dir="pages", output_dir="page_elements", timing=Fa
                 if timing:
                     page_elements_time += time.time() - start_time
                 
-                # Print the result structure for debugging
-                print(f"API response structure: {list(result.keys()) if isinstance(result, dict) else type(result)}")
+
                 
                 # Process the bounding box data according to the actual API response format
                 if 'data' in result and result['data']:
@@ -1403,20 +1401,12 @@ def print_content_summary(output_dir="page_elements"):
     print("Content Type Summary:")
     print("=" * 50)
     print(f"Total Elements: {counts['total_elements']}")
-    print(f"Total Inference Requests: {counts['total_inference_requests']}")
-    print()
-    
-    print("Content Type Breakdown:")
-    for content_type, stats in counts['content_type_breakdown'].items():
-        print(f"  {content_type}: {stats['total_elements']} elements, {stats['inference_requests']} inference requests")
     print()
     
     print("Per-Page Breakdown:")
     for page_name, page_stats in counts['pages'].items():
-        print(f"  {page_name}:")
-        for content_type, count in page_stats['content_types'].items():
-            print(f"    {content_type}: {count} elements")
-        print(f"    Total inference requests: {page_stats['inference_requests']}")
+        content_str = ", ".join([f"{content_type}s: {count}" for content_type, count in page_stats['content_types'].items()])
+        print(f"  {page_name}: {content_str}")
 
 
 def get_all_extracted_content(pages_dir="pages", output_dir="page_elements"):
