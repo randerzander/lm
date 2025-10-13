@@ -1280,6 +1280,178 @@ def get_all_extracted_content(pages_dir="pages", output_dir="page_elements"):
         'total_elements': 0
     }
     
+    # Determine the texts directory based on the pages directory structure
+    # In the new extraction structure, pages and texts are both subdirectories of the extraction root
+    extraction_root = os.path.dirname(pages_dir)  # This should be the extraction directory like "extracts/document_name"
+    texts_dir = os.path.join(extraction_root, "texts")
+    
+    # Process original page images and text files to add to the result
+    for image_path in sorted(glob(os.path.join(pages_dir, "*.jpg")) + glob(os.path.join(pages_dir, "*.png"))):
+        page_name = os.path.basename(image_path).replace('.jpg', '').replace('.png', '')
+        
+        # Look for corresponding text file in the texts directory
+        text_file_path = os.path.join(texts_dir, f"{page_name}.txt")
+        
+        page_text = ""
+        if os.path.exists(text_file_path):
+            with open(text_file_path, 'r', encoding='utf-8') as f:
+                page_text = f.read()
+        
+        if page_name not in result['pages']:
+            result['pages'][page_name] = {
+                'original_image_path': image_path,
+                'page_text': page_text,  # Add the extracted plain text
+                'elements': []
+            }
+    
+    # Process each content type directory
+    if os.path.exists(output_dir):
+        for content_type in os.listdir(output_dir):
+            content_type_path = os.path.join(output_dir, content_type)
+            
+            if not os.path.isdir(content_type_path):
+                continue
+                
+            # Process each JSONL file for this content type
+            for jsonl_file in glob(os.path.join(content_type_path, "*_elements.jsonl")):
+                page_name = os.path.basename(jsonl_file).replace("_elements.jsonl", "")
+                
+                if page_name not in result['pages']:
+                    result['pages'][page_name] = {
+                        'original_image_path': os.path.join(pages_dir, f"{page_name}.jpg"),
+                        'elements': []
+                    }
+                
+                # Process each element in the JSONL file
+                with open(jsonl_file, 'r') as f:
+                    for line in f:
+                        if line.strip():
+                            element_data = json.loads(line)
+                            
+                            # Create a comprehensive element record
+                            element_record = {
+                                'type': element_data.get('type', content_type),
+                                'original_image_path': element_data.get('image_path'),
+                                'sub_image_path': element_data.get('sub_image_path'),
+                                'bounding_box': {
+                                    'x_min': element_data.get('x_min'),
+                                    'y_min': element_data.get('y_min'),
+                                    'x_max': element_data.get('x_max'),
+                                    'y_max': element_data.get('y_max'),
+                                    'confidence': element_data.get('confidence', 1.0)
+                                },
+                                'content_texts': [],
+                                'related_images': [element_data.get('sub_image_path')] if element_data.get('sub_image_path') else []
+                            }
+                            
+                            # Handle content-specific data
+                            if content_type == 'table':
+                                # Get table structure and cell data
+                                if 'structure_path' in element_data and os.path.exists(element_data['structure_path']):
+                                    with open(element_data['structure_path'], 'r') as struct_file:
+                                        struct_data = json.load(struct_file)
+                                        
+                                        # Add table structure info
+                                        element_record['table_structure_path'] = element_data['structure_path']
+                                        
+                                        # Process cells if available
+                                        if 'data' in struct_data and struct_data['data']:
+                                            for page_struct in struct_data['data']:
+                                                if 'bounding_boxes' in page_struct and 'cell' in page_struct['bounding_boxes']:
+                                                    cells = page_struct['bounding_boxes']['cell']
+                                                    
+                                                    # Get cell images and OCR text
+                                                    cells_dir = element_data['sub_image_path'].replace('.jpg', '_cells')
+                                                    if os.path.exists(cells_dir):
+                                                        for cell_idx, cell in enumerate(cells):
+                                                            cell_image_path = os.path.join(cells_dir, f"{os.path.basename(element_data['sub_image_path']).replace('.jpg', '')}_cell_{cell_idx+1}.jpg")
+                                                            ocr_path = cell_image_path.replace('.jpg', '_ocr.json')
+                                                            
+                                                            if os.path.exists(cell_image_path):
+                                                                element_record['related_images'].append(cell_image_path)
+                                                                
+                                                                # Extract OCR text if available
+                                                                if os.path.exists(ocr_path):
+                                                                    with open(ocr_path, 'r') as ocr_file:
+                                                                        ocr_data = json.load(ocr_file)
+                                                                        if 'data' in ocr_data and ocr_data['data']:
+                                                                            for ocr_item in ocr_data['data']:
+                                                                                if 'text_detections' in ocr_item:
+                                                                                    for text_det in ocr_item['text_detections']:
+                                                                                        element_record['content_texts'].append({
+                                                                                            'text': text_det['text_prediction']['text'],
+                                                                                            'confidence': text_det['text_prediction']['confidence'],
+                                                                                            'source': f"cell_{cell_idx+1}",
+                                                                                            'bounding_box': text_det.get('bounding_box')
+                                                                                        })
+                                
+                                # Add to tables list
+                                result['content_elements']['tables'].append(element_record)
+                                
+                            elif content_type == 'chart':
+                                # Get chart elements and OCR text
+                                if 'elements_path' in element_data and os.path.exists(element_data['elements_path']):
+                                    element_record['chart_elements_path'] = element_data['elements_path']
+                                    
+                                    # Get chart element images and OCR
+                                    elements_dir = element_data['sub_image_path'].replace('.jpg', '_elements')
+                                    if os.path.exists(elements_dir):
+                                        # Collect all element images in this directory
+                                        for elem_file in glob(os.path.join(elements_dir, "*.jpg")):
+                                            element_record['related_images'].append(elem_file)
+                                            
+                                            # Get OCR text for this element if available
+                                            ocr_path = elem_file.replace('.jpg', '_ocr.json')
+                                            if os.path.exists(ocr_path):
+                                                with open(ocr_path, 'r') as ocr_file:
+                                                    ocr_data = json.load(ocr_file)
+                                                    if 'data' in ocr_data and ocr_data['data']:
+                                                        for ocr_item in ocr_data['data']:
+                                                            if 'text_detections' in ocr_item:
+                                                                for text_det in ocr_item['text_detections']:
+                                                                    element_record['content_texts'].append({
+                                                                        'text': text_det['text_prediction']['text'],
+                                                                        'confidence': text_det['text_prediction']['confidence'],
+                                                                        'source': os.path.basename(elem_file),
+                                                                        'bounding_box': text_det.get('bounding_box')
+                                                                    })
+                                
+                                # Add to charts list
+                                result['content_elements']['charts'].append(element_record)
+                                
+                            elif content_type == 'title':
+                                # Try to get OCR text for title elements
+                                ocr_path = element_data['sub_image_path'].replace('.jpg', '_ocr.json') if 'sub_image_path' in element_data else None
+                                if ocr_path and os.path.exists(ocr_path):
+                                    with open(ocr_path, 'r') as ocr_file:
+                                        ocr_data = json.load(ocr_file)
+                                        if 'data' in ocr_data and ocr_data['data']:
+                                            for ocr_item in ocr_data['data']:
+                                                if 'text_detections' in ocr_item:
+                                                    for text_det in ocr_item['text_detections']:
+                                                        element_record['content_texts'].append({
+                                                            'text': text_det['text_prediction']['text'],
+                                                            'confidence': text_det['text_prediction']['confidence'],
+                                                            'source': 'title',
+                                                            'bounding_box': text_det.get('bounding_box')
+                                                        })
+                                
+                                # Add to titles list
+                                result['content_elements']['titles'].append(element_record)
+                                
+                            else:
+                                # Add to other list
+                                result['content_elements']['other'].append(element_record)
+                            
+                            # Add to page elements
+                            result['pages'][page_name]['elements'].append(element_record)
+                            result['total_elements'] += 1
+    
+                            # Add to page elements
+                            result["pages"][page_name]["elements"].append(element_record)
+                            result["total_elements"] += 1
+    
+    return result
 
 def save_extracted_content_to_json(result_obj, extract_dir=None, output_file="extracted_content.json"):
     """
