@@ -1754,7 +1754,7 @@ def generate_embeddings_for_markdown(markdown_file_path, api_key=None):
                 input=list(batch_sections),
                 model="nvidia/llama-3.2-nemoretriever-1b-vlm-embed-v1",
                 encoding_format="float",
-                extra_body={"modality": ["text"], "input_type": "query", "truncate": "NONE"}
+                extra_body={"modality": ["text"] * len(batch_sections), "input_type": "query", "truncate": "NONE"}
             )
             
             # Process each embedding in the batch response
