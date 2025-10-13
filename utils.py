@@ -1736,7 +1736,9 @@ def generate_embeddings_for_markdown(markdown_file_path, api_key=None):
         if not section:
             continue
         # Skip the header sections if they're not actual page content
-        if section.startswith('# ') or section.startswith('## Document Overview'):
+        # Only skip sections that are purely document headers without page content
+        if section.startswith('# ') and ('## Page' not in section):
+            # This is likely just document headers without actual page content
             continue
         filtered_sections.append((i, section))
     
