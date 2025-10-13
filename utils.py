@@ -598,7 +598,8 @@ def process_page_images(pages_dir="pages", output_dir="page_elements", timing=Fa
     """
     Process all page images in the specified directory, extract content elements,
     and save them in subdirectories organized by content type in JSONL format.
-    Uses batch processing for page element extraction with fallback to single image processing.
+    Uses batch processing for page element extraction, table structure extraction,
+    and OCR with fallback to single image processing.
     
     Args:
         pages_dir (str): Directory containing page images
@@ -625,7 +626,8 @@ def process_page_images(pages_dir="pages", output_dir="page_elements", timing=Fa
     # Create output directory
     os.makedirs(output_dir, exist_ok=True)
     
-    # Lists to collect OCR tasks for batch processing later
+    # Lists to collect tasks for batch processing later
+    table_structure_tasks = []
     table_cell_ocr_tasks = []
     chart_element_ocr_tasks = []
     title_ocr_tasks = []
@@ -706,70 +708,19 @@ def process_page_images(pages_dir="pages", output_dir="page_elements", timing=Fa
                                     # Add the sub-image path to the element data
                                     element_with_type['sub_image_path'] = image_filename
                                     
-                                    # If this is a table, also extract table structure
+                                    # If this is a table, track for table structure extraction
                                     if content_type == 'table':
                                         # Save the cropped image temporarily for API call
                                         temp_table_path = image_filename.replace('.jpg', '_for_api.jpg')
                                         cropped_image.save(temp_table_path, "JPEG", quality=80)
                                         
-                                        # Extract table structure using the cropped image
-                                        try:
-                                            if timing:
-                                                start_time = time.time()
-                                            table_structure = extract_table_structure(temp_table_path, api_key)
-                                            if timing:
-                                                table_structure_time += time.time() - start_time
-                                            
-                                            # Save the table structure as a JSON file
-                                            structure_filename = image_filename.replace('.jpg', '_structure.json')
-                                            with open(structure_filename, 'w') as f:
-                                                json.dump(table_structure, f, indent=2)
-                                            
-                                            # Add structure file path to the element data
-                                            element_with_type['structure_path'] = structure_filename
-                                            
-                                            # Create a subdirectory for table cells
-                                            table_cells_dir = image_filename.replace('.jpg', '_cells')
-                                            os.makedirs(table_cells_dir, exist_ok=True)
-                                            
-                                            # Extract cell images from table structure
-                                            if 'data' in table_structure and table_structure['data']:
-                                                for page_struct in table_structure['data']:
-                                                    if 'bounding_boxes' in page_struct and 'cell' in page_struct['bounding_boxes']:
-                                                        cells = page_struct['bounding_boxes']['cell']
-                                                        
-                                                        # Get the dimensions of the cropped table image to convert normalized coordinates
-                                                        table_width, table_height = cropped_image.size
-                                                        
-                                                        for cell_idx, cell in enumerate(cells):
-                                                            # Calculate pixel coordinates from normalized coordinates
-                                                            cell_x_min = int(cell['x_min'] * table_width)
-                                                            cell_y_min = int(cell['y_min'] * table_height)
-                                                            cell_x_max = int(cell['x_max'] * table_width)
-                                                            cell_y_max = int(cell['y_max'] * table_height)
-                                                            
-                                                            # Ensure coordinates are within image bounds
-                                                            cell_x_min = max(0, cell_x_min)
-                                                            cell_y_min = max(0, cell_y_min)
-                                                            cell_x_max = min(table_width, cell_x_max)
-                                                            cell_y_max = min(table_height, cell_y_max)
-                                                            
-                                                            # Crop the cell from the table image
-                                                            if cell_x_max > cell_x_min and cell_y_max > cell_y_min:
-                                                                cell_image = cropped_image.crop((cell_x_min, cell_y_min, cell_x_max, cell_y_max))
-                                                                
-                                                                # Create filename based on source, page number, element number, and cell number
-                                                                base_name = os.path.basename(image_filename).replace('.jpg', '')
-                                                                cell_image_filename = os.path.join(table_cells_dir, f"{base_name}_cell_{cell_idx+1}.jpg")
-                                                                cell_image.save(cell_image_filename, "JPEG", quality=90)
-                                                                
-                                                                # Add cell image to OCR tasks to process later in batches
-                                                                table_cell_ocr_tasks.append(cell_image_filename)
-                                            
-                                            # Remove temporary image used for API call
-                                            os.remove(temp_table_path)
-                                        except Exception as e:
-                                            print(f"Error extracting table structure for {image_filename}: {str(e)}")
+                                        # Add table structure task to be processed in batch later
+                                        table_structure_tasks.append({
+                                            'temp_path': temp_table_path,
+                                            'image_path': image_filename,
+                                            'cropped_image': cropped_image,
+                                            'element_with_type': element_with_type
+                                        })
                                     
                                     # If this is a chart, extract graphic elements
                                     elif content_type == 'chart':
@@ -913,70 +864,19 @@ def process_page_images(pages_dir="pages", output_dir="page_elements", timing=Fa
                                         # Add the sub-image path to the element data
                                         element_with_type['sub_image_path'] = image_filename
                                         
-                                        # If this is a table, also extract table structure
+                                        # If this is a table, track for table structure extraction
                                         if content_type == 'table':
                                             # Save the cropped image temporarily for API call
                                             temp_table_path = image_filename.replace('.jpg', '_for_api.jpg')
                                             cropped_image.save(temp_table_path, "JPEG", quality=80)
                                             
-                                            # Extract table structure using the cropped image
-                                            try:
-                                                if timing:
-                                                    start_time = time.time()
-                                                table_structure = extract_table_structure(temp_table_path, api_key)
-                                                if timing:
-                                                    table_structure_time += time.time() - start_time
-                                                
-                                                # Save the table structure as a JSON file
-                                                structure_filename = image_filename.replace('.jpg', '_structure.json')
-                                                with open(structure_filename, 'w') as f:
-                                                    json.dump(table_structure, f, indent=2)
-                                                
-                                                # Add structure file path to the element data
-                                                element_with_type['structure_path'] = structure_filename
-                                                
-                                                # Create a subdirectory for table cells
-                                                table_cells_dir = image_filename.replace('.jpg', '_cells')
-                                                os.makedirs(table_cells_dir, exist_ok=True)
-                                                
-                                                # Extract cell images from table structure
-                                                if 'data' in table_structure and table_structure['data']:
-                                                    for page_struct in table_structure['data']:
-                                                        if 'bounding_boxes' in page_struct and 'cell' in page_struct['bounding_boxes']:
-                                                            cells = page_struct['bounding_boxes']['cell']
-                                                            
-                                                            # Get the dimensions of the cropped table image to convert normalized coordinates
-                                                            table_width, table_height = cropped_image.size
-                                                            
-                                                            for cell_idx, cell in enumerate(cells):
-                                                                # Calculate pixel coordinates from normalized coordinates
-                                                                cell_x_min = int(cell['x_min'] * table_width)
-                                                                cell_y_min = int(cell['y_min'] * table_height)
-                                                                cell_x_max = int(cell['x_max'] * table_width)
-                                                                cell_y_max = int(cell['y_max'] * table_height)
-                                                                
-                                                                # Ensure coordinates are within image bounds
-                                                                cell_x_min = max(0, cell_x_min)
-                                                                cell_y_min = max(0, cell_y_min)
-                                                                cell_x_max = min(table_width, cell_x_max)
-                                                                cell_y_max = min(table_height, cell_y_max)
-                                                                
-                                                                # Crop the cell from the table image
-                                                                if cell_x_max > cell_x_min and cell_y_max > cell_y_min:
-                                                                    cell_image = cropped_image.crop((cell_x_min, cell_y_min, cell_x_max, cell_y_max))
-                                                                    
-                                                                    # Create filename based on source, page number, element number, and cell number
-                                                                    base_name = os.path.basename(image_filename).replace('.jpg', '')
-                                                                    cell_image_filename = os.path.join(table_cells_dir, f"{base_name}_cell_{cell_idx+1}.jpg")
-                                                                    cell_image.save(cell_image_filename, "JPEG", quality=90)
-                                                                    
-                                                                    # Add cell image to OCR tasks to process later in batches
-                                                                    table_cell_ocr_tasks.append(cell_image_filename)
-                                                
-                                                # Remove temporary image used for API call
-                                                os.remove(temp_table_path)
-                                            except Exception as e:
-                                                print(f"Error extracting table structure for {image_filename}: {str(e)}")
+                                            # Add table structure task to be processed in batch later
+                                            table_structure_tasks.append({
+                                                'temp_path': temp_table_path,
+                                                'image_path': image_filename,
+                                                'cropped_image': cropped_image,
+                                                'element_with_type': element_with_type
+                                            })
                                         
                                         # If this is a chart, extract graphic elements
                                         elif content_type == 'chart':
@@ -1061,6 +961,161 @@ def process_page_images(pages_dir="pages", output_dir="page_elements", timing=Fa
                     print(f"Full response: {result}")
             except Exception as e:
                 print(f"Error processing {image_path}: {str(e)}")
+    
+    # Now process all the table structure tasks in batches
+    if table_structure_tasks:
+        print(f"Processing {len(table_structure_tasks)} table structure tasks in parallel batches...")
+        
+        # Extract the temporary image paths to process in batch
+        temp_paths = [task['temp_path'] for task in table_structure_tasks]
+        
+        try:
+            if timing:
+                start_time = time.time()
+            # Process all table structure batches in parallel
+            table_structure_batch_results = extract_table_structure_batch(temp_paths, api_key, batch_size)
+            if timing:
+                table_structure_time += time.time() - start_time
+            
+            # Process the table structure batch results
+            # Flatten the batch results since extract_table_structure_batch now returns all batches together
+            all_batch_table_structures = []
+            for batch_result in table_structure_batch_results:
+                if 'data' in batch_result:
+                    all_batch_table_structures.extend(batch_result['data'])
+            
+            # Process each table structure result
+            for task_idx, task in enumerate(table_structure_tasks):
+                temp_path = task['temp_path']
+                image_path = task['image_path']
+                cropped_image = task['cropped_image']
+                element_with_type = task['element_with_type']
+                
+                if task_idx < len(all_batch_table_structures):
+                    # all_batch_table_structures already contains the structure data directly from the API response
+                    table_structure = all_batch_table_structures[task_idx]
+                else:
+                    # Fallback: process individually if batch results don't match
+                    print(f"Batch result mismatch for {temp_path}, processing individually")
+                    table_structure = extract_table_structure(temp_path, api_key)
+                
+                # Save the table structure as a JSON file
+                structure_filename = image_path.replace('.jpg', '_structure.json')
+                with open(structure_filename, 'w') as f:
+                    json.dump(table_structure, f, indent=2)
+                
+                # Add structure file path to the element data
+                element_with_type['structure_path'] = structure_filename
+                
+                # Create a subdirectory for table cells
+                table_cells_dir = image_path.replace('.jpg', '_cells')
+                os.makedirs(table_cells_dir, exist_ok=True)
+                
+                # Extract cell images from table structure
+                if 'data' in table_structure and table_structure['data']:
+                    for page_struct in table_structure['data']:
+                        if 'bounding_boxes' in page_struct and 'cell' in page_struct['bounding_boxes']:
+                            cells = page_struct['bounding_boxes']['cell']
+                            
+                            # Get the dimensions of the cropped table image to convert normalized coordinates
+                            table_width, table_height = cropped_image.size
+                            
+                            for cell_idx, cell in enumerate(cells):
+                                # Calculate pixel coordinates from normalized coordinates
+                                cell_x_min = int(cell['x_min'] * table_width)
+                                cell_y_min = int(cell['y_min'] * table_height)
+                                cell_x_max = int(cell['x_max'] * table_width)
+                                cell_y_max = int(cell['y_max'] * table_height)
+                                
+                                # Ensure coordinates are within image bounds
+                                cell_x_min = max(0, cell_x_min)
+                                cell_y_min = max(0, cell_y_min)
+                                cell_x_max = min(table_width, cell_x_max)
+                                cell_y_max = min(table_height, cell_y_max)
+                                
+                                # Crop the cell from the table image
+                                if cell_x_max > cell_x_min and cell_y_max > cell_y_min:
+                                    cell_image = cropped_image.crop((cell_x_min, cell_y_min, cell_x_max, cell_y_max))
+                                    
+                                    # Create filename based on source, page number, element number, and cell number
+                                    base_name = os.path.basename(image_path).replace('.jpg', '')
+                                    cell_image_filename = os.path.join(table_cells_dir, f"{base_name}_cell_{cell_idx+1}.jpg")
+                                    cell_image.save(cell_image_filename, "JPEG", quality=90)
+                                    
+                                    # Add cell image to OCR tasks to process later in batches
+                                    table_cell_ocr_tasks.append(cell_image_filename)
+                
+                # Remove temporary image used for API call
+                if os.path.exists(temp_path):
+                    os.remove(temp_path)
+        except Exception as e:
+            print(f"Error processing table structure batches in parallel: {str(e)}")
+            print("Falling back to sequential processing...")
+            # Fall back to sequential processing if parallel processing fails
+            for task in table_structure_tasks:
+                temp_path = task['temp_path']
+                image_path = task['image_path']
+                cropped_image = task['cropped_image']
+                element_with_type = task['element_with_type']
+                
+                try:
+                    if timing:
+                        start_time = time.time()
+                    table_structure = extract_table_structure(temp_path, api_key)
+                    if timing:
+                        table_structure_time += time.time() - start_time
+                    
+                    # Save the table structure as a JSON file
+                    structure_filename = image_path.replace('.jpg', '_structure.json')
+                    with open(structure_filename, 'w') as f:
+                        json.dump(table_structure, f, indent=2)
+                    
+                    # Add structure file path to the element data
+                    element_with_type['structure_path'] = structure_filename
+                    
+                    # Create a subdirectory for table cells
+                    table_cells_dir = image_path.replace('.jpg', '_cells')
+                    os.makedirs(table_cells_dir, exist_ok=True)
+                    
+                    # Extract cell images from table structure
+                    if 'data' in table_structure and table_structure['data']:
+                        for page_struct in table_structure['data']:
+                            if 'bounding_boxes' in page_struct and 'cell' in page_struct['bounding_boxes']:
+                                cells = page_struct['bounding_boxes']['cell']
+                                
+                                # Get the dimensions of the cropped table image to convert normalized coordinates
+                                table_width, table_height = cropped_image.size
+                                
+                                for cell_idx, cell in enumerate(cells):
+                                    # Calculate pixel coordinates from normalized coordinates
+                                    cell_x_min = int(cell['x_min'] * table_width)
+                                    cell_y_min = int(cell['y_min'] * table_height)
+                                    cell_x_max = int(cell['x_max'] * table_width)
+                                    cell_y_max = int(cell['y_max'] * table_height)
+                                    
+                                    # Ensure coordinates are within image bounds
+                                    cell_x_min = max(0, cell_x_min)
+                                    cell_y_min = max(0, cell_y_min)
+                                    cell_x_max = min(table_width, cell_x_max)
+                                    cell_y_max = min(table_height, cell_y_max)
+                                    
+                                    # Crop the cell from the table image
+                                    if cell_x_max > cell_x_min and cell_y_max > cell_y_min:
+                                        cell_image = cropped_image.crop((cell_x_min, cell_y_min, cell_x_max, cell_y_max))
+                                        
+                                        # Create filename based on source, page number, element number, and cell number
+                                        base_name = os.path.basename(image_path).replace('.jpg', '')
+                                        cell_image_filename = os.path.join(table_cells_dir, f"{base_name}_cell_{cell_idx+1}.jpg")
+                                        cell_image.save(cell_image_filename, "JPEG", quality=90)
+                                        
+                                        # Add cell image to OCR tasks to process later in batches
+                                        table_cell_ocr_tasks.append(cell_image_filename)
+                    
+                    # Remove temporary image used for API call
+                    if os.path.exists(temp_path):
+                        os.remove(temp_path)
+                except Exception as e_individual:
+                    print(f"Error processing table structure for {temp_path}: {str(e_individual)}")
     
     # Now process all the OCR tasks in batches
     all_ocr_tasks = []
