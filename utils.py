@@ -1729,44 +1729,76 @@ def generate_embeddings_for_markdown(markdown_file_path, api_key=None):
     # Split content by page separators (--- followed by a newline, which was added in save_document_markdown)
     sections = content.split('---\n')
     
-    results = []
-    
+    # Filter out empty sections and header sections
+    filtered_sections = []
     for i, section in enumerate(sections):
         section = section.strip()
         if not section:
             continue
-            
         # Skip the header sections if they're not actual page content
         if section.startswith('# ') or section.startswith('## Document Overview'):
             continue
-            
+        filtered_sections.append((i, section))
+    
+    results = []
+    
+    # Batch process embeddings - API typically allows up to 2048 tokens per request and multiple inputs
+    batch_size = 20  # Reasonable batch size to stay within API limits
+    for batch_start in range(0, len(filtered_sections), batch_size):
+        batch = filtered_sections[batch_start:batch_start + batch_size]
+        batch_indices, batch_sections = zip(*batch)
+        
         try:
-            # Generate embedding for this page section
+            # Generate embeddings for the batch
             response = client.embeddings.create(
-                input=[section],
+                input=list(batch_sections),
                 model="nvidia/llama-3.2-nemoretriever-1b-vlm-embed-v1",
                 encoding_format="float",
                 extra_body={"modality": ["text"], "input_type": "query", "truncate": "NONE"}
             )
             
-            embedding = response.data[0].embedding
-            
-            results.append({
-                'page_index': i,
-                'content': section,
-                'embedding': embedding
-            })
-            
-            print(f"Generated embedding for page {i} (length: {len(section)} chars)")
-            
+            # Process each embedding in the batch response
+            for i, (page_idx, section) in enumerate(batch):
+                embedding = response.data[i].embedding
+                
+                results.append({
+                    'page_index': page_idx,
+                    'content': section,
+                    'embedding': embedding
+                })
+                
+                print(f"Generated embedding for page {page_idx} (length: {len(section)} chars)")
+                
         except Exception as e:
-            print(f"Error generating embedding for page {i}: {str(e)}")
-            results.append({
-                'page_index': i,
-                'content': section,
-                'embedding': None,
-                'error': str(e)
-            })
+            print(f"Error generating embedding batch starting at page {batch[0][0]}: {str(e)}")
+            # Fallback: process individually if batch fails
+            for page_idx, section in batch:
+                try:
+                    response = client.embeddings.create(
+                        input=[section],
+                        model="nvidia/llama-3.2-nemoretriever-1b-vlm-embed-v1",
+                        encoding_format="float",
+                        extra_body={"modality": ["text"], "input_type": "query", "truncate": "NONE"}
+                    )
+                    
+                    embedding = response.data[0].embedding
+                    
+                    results.append({
+                        'page_index': page_idx,
+                        'content': section,
+                        'embedding': embedding
+                    })
+                    
+                    print(f"Generated embedding for page {page_idx} (length: {len(section)} chars) using fallback")
+                    
+                except Exception as e_single:
+                    print(f"Error generating embedding for page {page_idx}: {str(e_single)}")
+                    results.append({
+                        'page_index': page_idx,
+                        'content': section,
+                        'embedding': None,
+                        'error': str(e_single)
+                    })
     
     total_time = time.time() - start_time
     print(f"Embedding generation completed in {total_time:.2f} seconds")
