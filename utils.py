@@ -5,8 +5,13 @@ import requests
 import base64
 from glob import glob
 from PIL import Image
+import concurrent.futures
+from threading import Lock
 
-def _make_batch_request(items, api_endpoint, headers, batch_size, payload_processor, result_processor, api_description="batch"):
+# Global lock for API requests to prevent overwhelming the server
+api_request_lock = Lock()
+
+def _make_batch_request(items, api_endpoint, headers, batch_size, payload_processor, result_processor, api_description="batch", max_workers=None, parallel=False):
     """
     Generic function for making batch requests to an API.
     
@@ -18,36 +23,99 @@ def _make_batch_request(items, api_endpoint, headers, batch_size, payload_proces
         payload_processor: Function that takes a batch of items and returns the payload
         result_processor: Function that processes the API response
         api_description: Description for logging purposes
+        max_workers: Maximum number of worker threads for parallel processing (default: CPU count)
+        parallel: Whether to process batches in parallel (default: False)
         
     Returns:
         list: List of results from processing each batch
     """
     results = []
     
-    # Process items in batches
+    # Create all batches first
+    all_batches = []
     for i in range(0, len(items), batch_size):
         batch_items = items[i:i + batch_size]
-        print(f"Processing {api_description} batch {i//batch_size + 1}/{(len(items)-1)//batch_size + 1} ({len(batch_items)} items)")
-        print(f"  Items in batch: {[os.path.basename(item) if isinstance(item, str) else item for item in batch_items]}")
+        all_batches.append(batch_items)
+    
+    if parallel and len(all_batches) > 1:
+        # Process all batches in parallel
+        print(f"Processing {len(all_batches)} {api_description} batches in parallel...")
         
-        # Prepare batch payload using the provided processor
-        payload = payload_processor(batch_items)
-        
-        try:
-            response = requests.post(api_endpoint, headers=headers, json=payload)
+        def process_single_batch(batch_idx_batch_items):
+            batch_idx, batch_items = batch_idx_batch_items
+            print(f"Processing {api_description} batch {batch_idx + 1}/{len(all_batches)} ({len(batch_items)} items)")
+            print(f"  Items in batch: {[os.path.basename(item) if isinstance(item, str) else item for item in batch_items]}")
             
-            if response.status_code == 200:
-                batch_result = response.json()
-                processed_result = result_processor(batch_result)
-                results.append(processed_result)
-            else:
-                print(f"{api_description.title()} API request failed with status {response.status_code}: {response.text}")
-                # Return partial results or raise exception based on requirements
-                raise requests.exceptions.RequestException(f"{api_description.title()} API request failed: {response.status_code}")
-        except Exception as e:
-            print(f"Error processing {api_description} batch: {str(e)}")
-            # Continue with other batches or raise exception based on requirements
-            raise
+            # Prepare batch payload using the provided processor
+            payload = payload_processor(batch_items)
+            
+            try:
+                # Use lock to prevent too many concurrent requests to the API
+                with api_request_lock:
+                    response = requests.post(api_endpoint, headers=headers, json=payload)
+                
+                if response.status_code == 200:
+                    batch_result = response.json()
+                    processed_result = result_processor(batch_result)
+                    return processed_result
+                else:
+                    print(f"{api_description.title()} API request failed with status {response.status_code}: {response.text}")
+                    # Raise exception to be handled by the executor
+                    raise requests.exceptions.RequestException(f"{api_description.title()} API request failed: {response.status_code}")
+            except Exception as e:
+                print(f"Error processing {api_description} batch: {str(e)}")
+                raise
+        
+        # Prepare batch index pairs for processing
+        batch_index_pairs = [(i, batch) for i, batch in enumerate(all_batches)]
+        
+        # Use ThreadPoolExecutor to process all batches in parallel
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all batch processing tasks
+            future_to_batch = {executor.submit(process_single_batch, batch_idx_pair): batch_idx_pair 
+                              for batch_idx_pair in batch_index_pairs}
+            
+            # Collect results in order of submission to maintain batch sequence
+            batch_results = [None] * len(all_batches)
+            for future in concurrent.futures.as_completed(future_to_batch):
+                batch_idx_pair = future_to_batch[future]
+                batch_idx = batch_idx_pair[0]
+                try:
+                    result = future.result()
+                    batch_results[batch_idx] = result
+                except Exception as e:
+                    print(f"Batch {batch_idx + 1} generated an exception: {str(e)}")
+                    raise
+            
+            # Add all results in order
+            results.extend(batch_results)
+    else:
+        # Process items in batches sequentially (original behavior)
+        for i in range(0, len(items), batch_size):
+            batch_items = items[i:i + batch_size]
+            print(f"Processing {api_description} batch {i//batch_size + 1}/{(len(items)-1)//batch_size + 1} ({len(batch_items)} items)")
+            print(f"  Items in batch: {[os.path.basename(item) if isinstance(item, str) else item for item in batch_items]}")
+            
+            # Prepare batch payload using the provided processor
+            payload = payload_processor(batch_items)
+            
+            try:
+                # Use lock to prevent too many concurrent requests to the API
+                with api_request_lock:
+                    response = requests.post(api_endpoint, headers=headers, json=payload)
+                
+                if response.status_code == 200:
+                    batch_result = response.json()
+                    processed_result = result_processor(batch_result)
+                    results.append(processed_result)
+                else:
+                    print(f"{api_description.title()} API request failed with status {response.status_code}: {response.text}")
+                    # Return partial results or raise exception based on requirements
+                    raise requests.exceptions.RequestException(f"{api_description.title()} API request failed: {response.status_code}")
+            except Exception as e:
+                print(f"Error processing {api_description} batch: {str(e)}")
+                # Continue with other batches or raise exception based on requirements
+                raise
     
     return results
 
@@ -408,7 +476,7 @@ def extract_ocr_text(image_path, api_key=None):
         response.raise_for_status()
 
 
-def extract_ocr_text_batch(image_paths, api_key=None, batch_size=20):
+def extract_ocr_text_batch(image_paths, api_key=None, batch_size=20, parallel=True, max_workers=None):
     """
     Extract text from multiple images using NVIDIA OCR API in batches.
     
@@ -417,6 +485,8 @@ def extract_ocr_text_batch(image_paths, api_key=None, batch_size=20):
         api_key (str, optional): API key for authorization. If not provided, 
                                 assumes running in NGC environment
         batch_size (int): Number of images to process in each batch (default: 20)
+        parallel (bool): Whether to process batches in parallel (default: True)
+        max_workers (int, optional): Maximum number of worker threads for parallel processing
     
     Returns:
         list: List of JSON responses containing OCR text results for each image
@@ -465,7 +535,9 @@ def extract_ocr_text_batch(image_paths, api_key=None, batch_size=20):
         batch_size, 
         payload_processor, 
         result_processor, 
-        "OCR"
+        "OCR",
+        parallel=parallel,
+        max_workers=max_workers
     )
 
 
@@ -1001,52 +1073,54 @@ def process_page_images(pages_dir="pages", output_dir="page_elements", timing=Fa
 
     # Process OCR tasks in batches
     if all_ocr_tasks:
-        print(f"Processing {len(all_ocr_tasks)} OCR tasks in batches...")
-        for i in range(0, len(all_ocr_tasks), batch_size):
-            ocr_batch = all_ocr_tasks[i:i + batch_size]
-            print(f"Processing OCR batch {i//batch_size + 1}/{(len(all_ocr_tasks)-1)//batch_size + 1} ({len(ocr_batch)} images)")
-            print(f"  Images in OCR batch: {ocr_batch}")
+        print(f"Processing {len(all_ocr_tasks)} OCR tasks in parallel batches...")
+        try:
+            if timing:
+                start_time = time.time()
+            # Process all OCR batches in parallel
+            ocr_batch_results = extract_ocr_text_batch(all_ocr_tasks, api_key, batch_size, parallel=True)
+            if timing:
+                ocr_time += time.time() - start_time
             
-            try:
-                if timing:
-                    start_time = time.time()
-                ocr_batch_results = extract_ocr_text_batch(ocr_batch, api_key, batch_size)
-                if timing:
-                    ocr_time += time.time() - start_time
+            # Process the OCR batch results
+            # Flatten the batch results since extract_ocr_text_batch now returns all batches together
+            all_batch_ocr_data = []
+            for batch_result in ocr_batch_results:
+                if 'data' in batch_result:
+                    all_batch_ocr_data.extend(batch_result['data'])
+            
+            # Process each image result
+            for img_idx, img_path in enumerate(all_ocr_tasks):
+                if img_idx < len(all_batch_ocr_data):
+                    # Create individual result for this specific image
+                    ocr_result = {"data": [all_batch_ocr_data[img_idx]]}
+                else:
+                    # Fallback: process individually if batch results don't match
+                    print(f"Batch result mismatch for {img_path}, processing individually")
+                    ocr_result = extract_ocr_text(img_path, api_key)
                 
-                # Process the OCR batch results
-                if 'data' in ocr_batch_results[0]:
-                    batch_ocr_data = ocr_batch_results[0]['data']
-                    for j, img_path in enumerate(ocr_batch):
-                        if j < len(batch_ocr_data):
-                            # Create individual result for this specific image
-                            ocr_result = {"data": [batch_ocr_data[j]]}
-                        else:
-                            # Fallback: process individually if batch results don't match
-                            print(f"Batch result mismatch for {img_path}, processing individually")
-                            ocr_result = extract_ocr_text(img_path, api_key)
-                        
-                        # Save the OCR result as a JSON file
-                        ocr_filename = img_path.replace('.jpg', '_ocr.json')
-                        with open(ocr_filename, 'w') as f:
-                            json.dump(ocr_result, f, indent=2)
-            except Exception as e:
-                print(f"Error processing OCR batch: {str(e)}")
-                # Fall back to individual processing if batch processing fails
-                for img_path in ocr_batch:
-                    try:
-                        if timing:
-                            start_time = time.time()
-                        ocr_result = extract_ocr_text(img_path, api_key)
-                        if timing:
-                            ocr_time += time.time() - start_time
-                        
-                        # Save the OCR result as a JSON file
-                        ocr_filename = img_path.replace('.jpg', '_ocr.json')
-                        with open(ocr_filename, 'w') as f:
-                            json.dump(ocr_result, f, indent=2)
-                    except Exception as e_individual:
-                        print(f"Error performing OCR on {img_path}: {str(e_individual)}")
+                # Save the OCR result as a JSON file
+                ocr_filename = img_path.replace('.jpg', '_ocr.json')
+                with open(ocr_filename, 'w') as f:
+                    json.dump(ocr_result, f, indent=2)
+        except Exception as e:
+            print(f"Error processing OCR batches in parallel: {str(e)}")
+            print("Falling back to sequential processing...")
+            # Fall back to sequential processing if parallel processing fails
+            for img_path in all_ocr_tasks:
+                try:
+                    if timing:
+                        start_time = time.time()
+                    ocr_result = extract_ocr_text(img_path, api_key)
+                    if timing:
+                        ocr_time += time.time() - start_time
+                    
+                    # Save the OCR result as a JSON file
+                    ocr_filename = img_path.replace('.jpg', '_ocr.json')
+                    with open(ocr_filename, 'w') as f:
+                        json.dump(ocr_result, f, indent=2)
+                except Exception as e_individual:
+                    print(f"Error performing OCR on {img_path}: {str(e_individual)}")
 
     # Report timing if requested
     if timing:
