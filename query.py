@@ -12,11 +12,12 @@ from openai import OpenAI
 def query_lancedb(db_path, query_text, source_document=None, limit=5):
     """
     Query the LanceDB collection to retrieve relevant content based on the query text.
+    Now searches across all documents in a single collection.
 
     Args:
         db_path (str): Path to the LanceDB directory
         query_text (str): Query text to search for
-        source_document (str): Optional source document filter
+        source_document (str): Optional source document filter (deprecated - now searches all documents)
         limit (int): Number of results to return (default: 5)
 
     Returns:
@@ -26,23 +27,14 @@ def query_lancedb(db_path, query_text, source_document=None, limit=5):
         # Connect to the database
         db = lancedb.connect(db_path)
         
-        # Find the table names - they follow the pattern {source_fn}_pages
+        # The table name is now fixed as "all_documents"
+        table_name = "all_documents"
+        
+        # Check if the table exists
         table_names = db.table_names()
-        
-        if not table_names:
-            print(f"No tables found in {db_path}")
+        if table_name not in table_names:
+            print(f"Table '{table_name}' not found. Available tables: {table_names}")
             return []
-        
-        # If a specific source document is provided, look for its table
-        if source_document:
-            table_name = f"{source_document}_pages"
-            if table_name not in table_names:
-                print(f"Table {table_name} not found. Available tables: {table_names}")
-                return []
-        else:
-            # If no specific document is specified, use the first available table
-            # In practice, we'll search across all tables or use the most recent
-            table_name = table_names[0]  # Use the first table as default
         
         # Get the table
         table = db.open_table(table_name)
@@ -64,7 +56,12 @@ def query_lancedb(db_path, query_text, source_document=None, limit=5):
         query_embedding = response.data[0].embedding
         
         # Query the table using vector search
-        results = table.search(query_embedding).limit(limit).to_list()
+        # If source_document is provided, filter by that document
+        if source_document:
+            results = table.search(query_embedding).where(f"source_document = '{source_document}'").limit(limit).to_list()
+        else:
+            # Search across all documents
+            results = table.search(query_embedding).limit(limit).to_list()
         
         return results
         
@@ -73,13 +70,14 @@ def query_lancedb(db_path, query_text, source_document=None, limit=5):
         return []
 
 
-def query_with_llm(context, question):
+def query_with_llm(context, question, result_metadata):
     """
     Query the LLM with provided context to answer a question.
 
     Args:
         context (str): Retrieved context from LanceDB
         question (str): Question to answer
+        result_metadata (dict): Metadata for the result including source_document, page_index, and other fields
 
     Returns:
         str: Generated answer from the LLM
@@ -88,6 +86,23 @@ def query_with_llm(context, question):
         base_url="https://integrate.api.nvidia.com/v1",
         api_key=os.getenv("NVIDIA_API_KEY")
     )
+    
+    # Extract metadata
+    source_document = result_metadata.get('source_document', 'unknown')
+    page_index = result_metadata.get('page_index', 'unknown')
+    
+    # Check content type - based on the structure, we can infer content type from the context content
+    content_type = "text"
+    # Check if the content contains table-like structures, chart descriptions, or other elements
+    context_lower = context.lower()
+    if any(keyword in context_lower for keyword in ['table', '|', 'column', 'row', 'cell', 'headers']):
+        content_type = "table"
+    elif any(keyword in context_lower for keyword in ['chart', 'graph', 'plot', 'axis', 'legend', 'data point', 'bar', 'pie']):
+        content_type = "chart"
+    elif any(keyword in context_lower for keyword in ['title', 'heading', 'subtitle']):
+        content_type = "title"
+    elif any(keyword in context_lower for keyword in ['image', 'picture', 'figure', 'diagram']):
+        content_type = "image"
     
     # Prepare the prompt with context and question
     system_message = f"""
@@ -127,21 +142,36 @@ def query_with_llm(context, question):
             print(content, end="", flush=True)
             answer += content
             
+    # Print citation information after the answer
+    print(f"\n\n[Source: Document '{source_document}', Page {page_index}, Content Type: {content_type}]")
+            
     return answer
 
 
 def main():
     parser = argparse.ArgumentParser(description="Query documents using LanceDB and LLM")
     parser.add_argument("query", nargs='?', help="Question to ask about the documents")
-    parser.add_argument("--db-path", help="Path to the LanceDB directory (default: ./extracts/{source_document}/lancedb)")
-    parser.add_argument("--source-document", required=True, help="Specific source document to search in (required)")
+    parser.add_argument("--db-path", help="Path to the LanceDB directory (default: ./extracts/lancedb)")
+    parser.add_argument("--source-document", help="Optional specific source document to search in (searches all documents if not provided)")
     parser.add_argument("--limit", type=int, default=5, help="Number of results to retrieve (default: 5)")
     
     args = parser.parse_args()
     
-    # Set default db path based on source document if not provided
+    # Set default db path if not provided
     if not args.db_path:
-        args.db_path = f"./extracts/{args.source_document}/lancedb"
+        if args.source_document:
+            args.db_path = f"./extracts/{args.source_document}/lancedb"
+        else:
+            # Default to a common lancedb path that can contain all documents
+            # If multiple document directories exist, we'll look for the first one with a lancedb directory
+            import glob
+            db_paths = glob.glob("./extracts/*/lancedb")
+            if db_paths:
+                # Use the first available lancedb directory
+                args.db_path = db_paths[0]
+            else:
+                # Default fallback
+                args.db_path = "./extracts/lancedb"
     
     # Check if query is provided either as argument or to be read from stdin
     if not args.query:
@@ -152,7 +182,8 @@ def main():
         else:
             print("Error: No query provided. Please provide a query as an argument or pipe it to the script.")
             print("\nUsage examples:")
-            print("  python query.py 'What is the capital of France?'")
+            print("  python query.py 'What is the capital of France?'  # Search across all documents")
+            print("  python query.py --source-document doc1 'Your question here'  # Search specific document")
             print("  python query.py --db-path /path/to/db 'Your question here'")
             print("  echo 'Your question' | python query.py")
             return 1
@@ -182,14 +213,15 @@ def main():
         print("No relevant content found in the database.")
         return 1
     
-    # Combine the retrieved content for context
-    context = "\n\n".join([result['content'] for result in results if 'content' in result])
+    # Use only the top result for context
+    top_result = results[0]
+    context = top_result['content']
     
-    print(f"\nFound {len(results)} relevant results. Generating answer...")
+    print(f"\nFound {len(results)} relevant results. Using top result for answer generation...")
     print("\nAnswer:\n")
     
-    # Get answer from LLM with the context
-    query_with_llm(context, args.query)
+    # Get answer from LLM with the top result as context
+    query_with_llm(context, args.query, top_result)
     
     print("\n")  # Add a final newline
 
