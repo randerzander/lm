@@ -6,6 +6,130 @@ import base64
 from glob import glob
 from PIL import Image
 
+def _make_batch_request(items, api_endpoint, headers, batch_size, payload_processor, result_processor, api_description="batch"):
+    """
+    Generic function for making batch requests to an API.
+    
+    Args:
+        items: List of items to process in batches
+        api_endpoint: API endpoint URL
+        headers: Headers for the API request
+        batch_size: Number of items to process in each batch
+        payload_processor: Function that takes a batch of items and returns the payload
+        result_processor: Function that processes the API response
+        api_description: Description for logging purposes
+        
+    Returns:
+        list: List of results from processing each batch
+    """
+    results = []
+    
+    # Process items in batches
+    for i in range(0, len(items), batch_size):
+        batch_items = items[i:i + batch_size]
+        print(f"Processing {api_description} batch {i//batch_size + 1}/{(len(items)-1)//batch_size + 1} ({len(batch_items)} items)")
+        print(f"  Items in batch: {[os.path.basename(item) if isinstance(item, str) else item for item in batch_items]}")
+        
+        # Prepare batch payload using the provided processor
+        payload = payload_processor(batch_items)
+        
+        try:
+            response = requests.post(api_endpoint, headers=headers, json=payload)
+            
+            if response.status_code == 200:
+                batch_result = response.json()
+                processed_result = result_processor(batch_result)
+                results.append(processed_result)
+            else:
+                print(f"{api_description.title()} API request failed with status {response.status_code}: {response.text}")
+                # Return partial results or raise exception based on requirements
+                raise requests.exceptions.RequestException(f"{api_description.title()} API request failed: {response.status_code}")
+        except Exception as e:
+            print(f"Error processing {api_description} batch: {str(e)}")
+            # Continue with other batches or raise exception based on requirements
+            raise
+    
+    return results
+
+
+def _make_embedding_batch_request(items, client, batch_size, api_description="embedding"):
+    """
+    Generic function for making batch requests for embeddings.
+    
+    Args:
+        items: List of items (text content) to process in batches
+        client: OpenAI client for embeddings
+        batch_size: Number of items to process in each batch
+        api_description: Description for logging purposes
+        
+    Returns:
+        list: List of results from processing each item
+    """
+    results = []
+    
+    # Process items in batches
+    for i in range(0, len(items), batch_size):
+        batch_items = items[i:i + batch_size]
+        print(f"Processing {api_description} batch {i//batch_size + 1}/{(len(items)-1)//batch_size + 1} ({len(batch_items)} items)")
+        
+        # Prepare batch content
+        batch_contents = [item[1] for item in batch_items]  # item[1] is the content
+        
+        try:
+            # Generate embeddings for the batch
+            response = client.embeddings.create(
+                input=batch_contents,
+                model="nvidia/llama-3.2-nemoretriever-1b-vlm-embed-v1",
+                encoding_format="float",
+                extra_body={"modality": ["text"] * len(batch_contents), "input_type": "query", "truncate": "NONE"}
+            )
+            
+            # Process each embedding in the batch response
+            for j, (page_idx, content) in enumerate(batch_items):
+                embedding = response.data[j].embedding
+                
+                results.append({
+                    'page_index': page_idx,
+                    'content': content,
+                    'embedding': embedding
+                })
+                
+                print(f"Generated embedding for page {page_idx} (length: {len(content)} chars)")
+                
+        except Exception as e:
+            print(f"Error processing {api_description} batch starting at page {batch_items[0][0]}: {str(e)}")
+            # Fallback: process individually if batch fails
+            for page_idx, content in batch_items:
+                try:
+                    response = client.embeddings.create(
+                        input=[content],
+                        model="nvidia/llama-3.2-nemoretriever-1b-vlm-embed-v1",
+                        encoding_format="float",
+                        extra_body={"modality": ["text"], "input_type": "query", "truncate": "NONE"}
+                    )
+                    
+                    embedding = response.data[0].embedding
+                    
+                    results.append({
+                        'page_index': page_idx,
+                        'content': content,
+                        'embedding': embedding
+                    })
+                    
+                    print(f"Generated embedding for page {page_idx} (length: {len(content)} chars) using fallback")
+                    
+                except Exception as e_single:
+                    print(f"Error generating embedding for page {page_idx}: {str(e_single)}")
+                    results.append({
+                        'page_index': page_idx,
+                        'content': content,
+                        'embedding': None,
+                        'error': str(e_single)
+                    })
+    
+    return results
+
+
 def extract_bounding_boxes(image_path, api_key=None):
     """
     Extract bounding boxes for various content types from an image using NVIDIA AI API.
@@ -88,15 +212,7 @@ def extract_bounding_boxes_batch(image_paths, api_key=None, batch_size=5):
             "Accept": "application/json"
         }
 
-    results = []
-    
-    # Process images in batches
-    for i in range(0, len(image_paths), batch_size):
-        batch_paths = image_paths[i:i + batch_size]
-        print(f"Processing page elements batch {i//batch_size + 1}/{(len(image_paths)-1)//batch_size + 1} ({len(batch_paths)} images)")
-        print(f"  Images in batch: {batch_paths}")
-        
-        # Prepare batch payload
+    def payload_processor(batch_paths):
         inputs = []
         for img_path in batch_paths:
             with open(img_path, "rb") as f:
@@ -110,24 +226,20 @@ def extract_bounding_boxes_batch(image_paths, api_key=None, batch_size=5):
                 "url": f"data:image/jpeg;base64,{image_b64}"
             })
         
-        payload = {"input": inputs}
-        
-        try:
-            response = requests.post(invoke_url, headers=headers, json=payload)
-            
-            if response.status_code == 200:
-                batch_result = response.json()
-                results.append(batch_result)
-            else:
-                print(f"Page elements API request failed with status {response.status_code}: {response.text}")
-                # Return partial results or raise exception based on requirements
-                raise requests.exceptions.RequestException(f"Page elements API request failed: {response.status_code}")
-        except Exception as e:
-            print(f"Error processing page elements batch: {str(e)}")
-            # Continue with other batches or raise exception based on requirements
-            raise
-    
-    return results
+        return {"input": inputs}
+
+    def result_processor(batch_result):
+        return batch_result
+
+    return _make_batch_request(
+        image_paths, 
+        invoke_url, 
+        headers, 
+        batch_size, 
+        payload_processor, 
+        result_processor, 
+        "page elements"
+    )
 
 
 def extract_table_structure(image_path, api_key=None):
@@ -212,15 +324,7 @@ def extract_table_structure_batch(image_paths, api_key=None, batch_size=5):
             "Accept": "application/json"
         }
 
-    results = []
-    
-    # Process images in batches
-    for i in range(0, len(image_paths), batch_size):
-        batch_paths = image_paths[i:i + batch_size]
-        print(f"Processing table structure batch {i//batch_size + 1}/{(len(image_paths)-1)//batch_size + 1} ({len(batch_paths)} images)")
-        print(f"  Images in batch: {batch_paths}")
-        
-        # Prepare batch payload
+    def payload_processor(batch_paths):
         inputs = []
         for img_path in batch_paths:
             with open(img_path, "rb") as f:
@@ -234,24 +338,20 @@ def extract_table_structure_batch(image_paths, api_key=None, batch_size=5):
                 "url": f"data:image/jpeg;base64,{image_b64}"
             })
         
-        payload = {"input": inputs}
-        
-        try:
-            response = requests.post(invoke_url, headers=headers, json=payload)
-            
-            if response.status_code == 200:
-                batch_result = response.json()
-                results.append(batch_result)
-            else:
-                print(f"Table structure API request failed with status {response.status_code}: {response.text}")
-                # Return partial results or raise exception based on requirements
-                raise requests.exceptions.RequestException(f"Table structure API request failed: {response.status_code}")
-        except Exception as e:
-            print(f"Error processing table structure batch: {str(e)}")
-            # Continue with other batches or raise exception based on requirements
-            raise
-    
-    return results
+        return {"input": inputs}
+
+    def result_processor(batch_result):
+        return batch_result
+
+    return _make_batch_request(
+        image_paths, 
+        invoke_url, 
+        headers, 
+        batch_size, 
+        payload_processor, 
+        result_processor, 
+        "table structure"
+    )
 
 
 
@@ -339,15 +439,7 @@ def extract_ocr_text_batch(image_paths, api_key=None, batch_size=20):
             "Accept": "application/json"
         }
 
-    results = []
-    
-    # Process images in batches
-    for i in range(0, len(image_paths), batch_size):
-        batch_paths = image_paths[i:i + batch_size]
-        print(f"Processing OCR batch {i//batch_size + 1}/{(len(image_paths)-1)//batch_size + 1} ({len(batch_paths)} images)")
-        print(f"  Images in batch: {batch_paths}")
-        
-        # Prepare batch payload
+    def payload_processor(batch_paths):
         inputs = []
         for img_path in batch_paths:
             with open(img_path, "rb") as f:
@@ -361,24 +453,20 @@ def extract_ocr_text_batch(image_paths, api_key=None, batch_size=20):
                 "url": f"data:image/jpeg;base64,{image_b64}"
             })
         
-        payload = {"input": inputs}
-        
-        try:
-            response = requests.post(invoke_url, headers=headers, json=payload)
-            
-            if response.status_code == 200:
-                batch_result = response.json()
-                results.append(batch_result)
-            else:
-                print(f"OCR API request failed with status {response.status_code}: {response.text}")
-                # Return partial results or raise exception based on requirements
-                raise requests.exceptions.RequestException(f"OCR API request failed: {response.status_code}")
-        except Exception as e:
-            print(f"Error processing OCR batch: {str(e)}")
-            # Continue with other batches or raise exception based on requirements
-            raise
-    
-    return results
+        return {"input": inputs}
+
+    def result_processor(batch_result):
+        return batch_result
+
+    return _make_batch_request(
+        image_paths, 
+        invoke_url, 
+        headers, 
+        batch_size, 
+        payload_processor, 
+        result_processor, 
+        "OCR"
+    )
 
 
 
@@ -1742,65 +1830,13 @@ def generate_embeddings_for_markdown(markdown_file_path, api_key=None):
             continue
         filtered_sections.append((i, section))
     
-    results = []
-    
-    # Batch process embeddings - API typically allows up to 2048 tokens per request and multiple inputs
-    batch_size = 20  # Reasonable batch size to stay within API limits
-    for batch_start in range(0, len(filtered_sections), batch_size):
-        batch = filtered_sections[batch_start:batch_start + batch_size]
-        batch_indices, batch_sections = zip(*batch)
-        
-        try:
-            # Generate embeddings for the batch
-            response = client.embeddings.create(
-                input=list(batch_sections),
-                model="nvidia/llama-3.2-nemoretriever-1b-vlm-embed-v1",
-                encoding_format="float",
-                extra_body={"modality": ["text"] * len(batch_sections), "input_type": "query", "truncate": "NONE"}
-            )
-            
-            # Process each embedding in the batch response
-            for i, (page_idx, section) in enumerate(batch):
-                embedding = response.data[i].embedding
-                
-                results.append({
-                    'page_index': page_idx,
-                    'content': section,
-                    'embedding': embedding
-                })
-                
-                print(f"Generated embedding for page {page_idx} (length: {len(section)} chars)")
-                
-        except Exception as e:
-            print(f"Error generating embedding batch starting at page {batch[0][0]}: {str(e)}")
-            # Fallback: process individually if batch fails
-            for page_idx, section in batch:
-                try:
-                    response = client.embeddings.create(
-                        input=[section],
-                        model="nvidia/llama-3.2-nemoretriever-1b-vlm-embed-v1",
-                        encoding_format="float",
-                        extra_body={"modality": ["text"], "input_type": "query", "truncate": "NONE"}
-                    )
-                    
-                    embedding = response.data[0].embedding
-                    
-                    results.append({
-                        'page_index': page_idx,
-                        'content': section,
-                        'embedding': embedding
-                    })
-                    
-                    print(f"Generated embedding for page {page_idx} (length: {len(section)} chars) using fallback")
-                    
-                except Exception as e_single:
-                    print(f"Error generating embedding for page {page_idx}: {str(e_single)}")
-                    results.append({
-                        'page_index': page_idx,
-                        'content': section,
-                        'embedding': None,
-                        'error': str(e_single)
-                    })
+    # Use the new embedding batching function
+    results = _make_embedding_batch_request(
+        filtered_sections,
+        client,
+        batch_size=20,  # Reasonable batch size to stay within API limits
+        api_description="embeddings"
+    )
     
     total_time = time.time() - start_time
     print(f"Embedding generation completed in {total_time:.2f} seconds")
