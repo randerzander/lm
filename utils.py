@@ -1537,6 +1537,229 @@ def get_all_extracted_content(pages_dir="pages", output_dir="page_elements"):
     
     return result
 
+def format_markdown_table(element, content_texts):
+    """
+    Format table content as markdown from extracted content texts and structure.
+    
+    Args:
+        element (dict): Element record containing table data
+        content_texts (list): List of content text objects from the table element
+        
+    Returns:
+        list: List of markdown lines representing the table
+    """
+    import os
+    import json
+    
+    markdown_lines = []
+    
+    # Extract cell texts and organize by source for proper table structure
+    cell_texts = []
+    other_texts = []
+    
+    for content in content_texts:
+        text = content.get('text', '')
+        source = content.get('source', '')
+        if source and source.startswith('cell_'):
+            # Store cell data with source information
+            cell_texts.append((source, text))
+        elif text.strip():
+            other_texts.append(text)
+
+    # Add any non-cell text first
+    for text in other_texts:
+        markdown_lines.append(f"> {text.strip()}")
+
+    # Now format cell data as markdown table if there's cell data
+    if cell_texts:
+        # Sort cells by their source order (cell_1, cell_2, etc.)
+        sorted_cells = sorted(cell_texts, key=lambda x: int(x[0].replace('cell_', '')) if x[0].startswith('cell_') else 0)
+
+        # Get the table structure to properly format the table
+        table_structure_path = element.get('table_structure_path')
+        if table_structure_path and os.path.exists(table_structure_path):
+            with open(table_structure_path, 'r') as struct_file:
+                struct_data = json.load(struct_file)
+
+            # Extract table structure to determine rows and columns
+            if 'data' in struct_data and struct_data['data']:
+                for page_struct in struct_data['data']:
+                    if 'bounding_boxes' in page_struct and 'cell' in page_struct['bounding_boxes']:
+                        cells = page_struct['bounding_boxes']['cell']
+
+                        # Now we'll use both the structure information and the OCR content
+                        # to build a proper markdown table
+
+                        # For a proper markdown table, we need to determine the grid structure
+                        # from the cell coordinates. Since this is complex, we'll implement
+                        # a simplified version that attempts to organize cells into rows.
+
+                        # First, let's get the cell data with coordinates if available
+                        # and the actual OCR text content
+                        cell_data_with_coords = []
+                        for i, cell_info in enumerate(cells):
+                            if i < len(sorted_cells):
+                                cell_id, text = sorted_cells[i]
+                                # Use the structure coordinates and the OCR text
+                                cell_data_with_coords.append({
+                                    'text': text,
+                                    'x_min': cell_info.get('x_min', 0),
+                                    'y_min': cell_info.get('y_min', 0),
+                                    'x_max': cell_info.get('x_max', 1),
+                                    'y_max': cell_info.get('y_max', 1)
+                                })
+
+                        # If we have cell data, try to create a proper table structure
+                        if cell_data_with_coords:
+                            # For simplicity of this implementation, we'll sort cells by y-coordinate first
+                            # (for rows) and then by x-coordinate (for columns) to simulate table structure
+                            # This is a simplified approach - a robust implementation would use
+                            # more sophisticated algorithms to determine table grid
+
+                            # Group cells by similar y-coordinates (rows)
+                            # Use a simple approach with tolerance for y-coordinates
+                            row_tolerance = 0.05  # Adjust based on coordinate system
+                            rows = []
+                            used_cells = set()
+
+                            for i, cell in enumerate(cell_data_with_coords):
+                                if i in used_cells:
+                                    continue
+
+                                current_row = [cell]
+                                used_cells.add(i)
+
+                                # Find other cells with similar y_min (in the same row)
+                                for j, other_cell in enumerate(cell_data_with_coords):
+                                    if j in used_cells:
+                                        continue
+                                    if abs(cell['y_min'] - other_cell['y_min']) < row_tolerance:
+                                        current_row.append(other_cell)
+                                        used_cells.add(j)
+
+                                # Sort cells in row by x-coordinate (left to right)
+                                current_row.sort(key=lambda c: c['x_min'])
+                                rows.append(current_row)
+
+                            # Now sort rows by y-coordinate (top to bottom)
+                            rows.sort(key=lambda r: r[0]['y_min'] if r else 0)
+
+                            if rows:
+                                # Create markdown table
+                                if rows:
+                                    # Create header row from first row if it looks like a header
+                                    first_row = rows[0]
+                                    headers = [cell['text'].strip() if cell['text'].strip() else " " for cell in first_row]
+                                    header_row = "| " + " | ".join(headers) + " |"
+                                    separator_row = "|" + "|".join([" --- " for _ in headers]) + "|"
+
+                                    markdown_lines.append(header_row)
+                                    markdown_lines.append(separator_row)
+
+                                    # Add remaining rows
+                                    for row in rows[1:]:
+                                        row_data = [cell['text'].strip() if cell['text'].strip() else " " for cell in row]
+                                        row_str = "| " + " | ".join(row_data) + " |"
+                                        markdown_lines.append(row_str)
+                            else:
+                                # Fallback: if we cannot determine rows, just put all cells in one row
+                                all_texts = [cell['text'].strip() if cell['text'].strip() else " " for cell in cell_data_with_coords]
+                                if all_texts:
+                                    header_row = "| " + " | ".join(all_texts) + " |"
+                                    separator_row = "|" + "|".join([" --- " for _ in all_texts]) + "|"
+                                    markdown_lines.append(header_row)
+                                    markdown_lines.append(separator_row)
+        else:
+            # If no structure file, just display as list
+            for source, text in sorted_cells:
+                if text.strip():
+                    markdown_lines.append(f"- {text.strip()}")
+    else:
+        # If no cell texts, just display other texts (if any)
+        for text in other_texts:
+            if text.strip():
+                markdown_lines.append(f"- {text.strip()}")
+    
+    return markdown_lines
+
+def format_markdown_chart(element, content_texts):
+    """
+    Format chart content as markdown from extracted content texts.
+    
+    Args:
+        element (dict): Element record containing chart data
+        content_texts (list): List of content text objects from the chart element
+        
+    Returns:
+        list: List of markdown lines representing the chart content
+    """
+    import os
+    
+    markdown_lines = []
+    
+    # Process each text element in the chart
+    for content in content_texts:
+        text = content.get('text', '')
+        source = content.get('source', '')
+        
+        # Check if this is a chart element with source information
+        if source and text.strip():
+            # Extract a more meaningful name from the source (remove page info, element info)
+            # Example: "page_001_element_1_chart_ylabel_2.jpg" -> "Ylabel 2"
+            source_name = source.replace('.jpg', '').replace('.png', '')
+            
+            # Look for common chart element patterns and extract the meaningful part
+            # Handle complex multi-part names first
+            if 'chart_title' in source_name:
+                clean_source = 'Chart Title'
+            elif 'x_label' in source_name or 'xlabel' in source_name:
+                clean_source = 'X Label'
+            elif 'y_label' in source_name or 'ylabel' in source_name:
+                clean_source = 'Y Label'
+            elif 'legend' in source_name:
+                clean_source = 'Legend'
+            elif 'axis' in source_name:
+                clean_source = 'Axis'
+            else:
+                # For other cases, split by "_" and filter out common prefixes
+                parts = source_name.split('_')
+                
+                # Remove common prefixes like 'page', 'element', 'chart', numbers
+                meaningful_parts = []
+                i = 0
+                while i < len(parts):
+                    part = parts[i]
+                    
+                    # Skip common prefixes
+                    if part in ['page', 'element', 'chart'] or (part.isdigit() and len(part) <= 3):
+                        # Skip this and potentially the next part (if it's a page/element number)
+                        i += 1
+                        if i < len(parts) and parts[i].isdigit():
+                            i += 1
+                    else:
+                        meaningful_parts.append(part)
+                        i += 1
+                        
+                # Create a cleaner label from the meaningful parts
+                if meaningful_parts:
+                    clean_source = ' '.join(meaningful_parts).replace('_', ' ').title()
+                else:
+                    clean_source = source_name.replace('_', ' ').title()
+            
+            markdown_lines.append(f"> **{clean_source}:** {text.strip()}")
+        elif text.strip():
+            # If no specific source, just add the text
+            markdown_lines.append(f"> {text.strip()}")
+    
+    # If no content texts were processed, just return an empty list
+    if not markdown_lines:
+        # Add a placeholder if there are chart elements but no text
+        elements_dir = element.get('sub_image_path', '').replace('.jpg', '_elements') if element.get('sub_image_path') else None
+        if elements_dir and os.path.exists(elements_dir):
+            markdown_lines.append("> Chart elements detected but no text content extracted")
+    
+    return markdown_lines
+
 def save_extracted_content_to_json(result_obj, extract_dir=None, output_file="extracted_content.json"):
     """
     Save the extracted content result object to a JSON file.
@@ -1613,146 +1836,21 @@ def save_document_markdown(result_obj, extract_dir=None, source_fn=None):
                 content_texts = element.get('content_texts', [])
                 if content_texts:
                     if element_type == 'table':
-                        # Extract cell texts and organize by source for proper table structure
-                        cell_texts = []
-                        other_texts = []
-                        
-                        for content in content_texts:
-                            text = content.get('text', '')
-                            source = content.get('source', '')
-                            if source and source.startswith('cell_'):
-                                # Store cell data with source information
-                                cell_texts.append((source, text))
-                            elif text.strip():
-                                other_texts.append(text)
-                        
-                        # Add any non-cell text first
-                        for text in other_texts:
-                            markdown_content.append(f"> {text.strip()}")
-                        
-                        # Now format cell data as markdown table if there's cell data
-                        if cell_texts:
-                            # Sort cells by their source order (cell_1, cell_2, etc.)
-                            sorted_cells = sorted(cell_texts, key=lambda x: int(x[0].replace('cell_', '')) if x[0].startswith('cell_') else 0)
-                            
-                            # Get the table structure to properly format the table
-                            table_structure_path = element.get('table_structure_path')
-                            if table_structure_path and os.path.exists(table_structure_path):
-                                import json
-                                with open(table_structure_path, 'r') as struct_file:
-                                    struct_data = json.load(struct_file)
-                                
-                                # Extract table structure to determine rows and columns
-                                if 'data' in struct_data and struct_data['data']:
-                                    for page_struct in struct_data['data']:
-                                        if 'bounding_boxes' in page_struct and 'cell' in page_struct['bounding_boxes']:
-                                            cells = page_struct['bounding_boxes']['cell']
-                                            
-                                            # Now we'll use both the structure information and the OCR content
-                                            # to build a proper markdown table
-                                            
-                                            # For a proper markdown table, we need to determine the grid structure
-                                            # from the cell coordinates. Since this is complex, we'll implement
-                                            # a simplified version that attempts to organize cells into rows.
-                                            
-                                            # First, let's get the cell data with coordinates if available
-                                            # and the actual OCR text content
-                                            cell_data_with_coords = []
-                                            for i, cell_info in enumerate(cells):
-                                                if i < len(sorted_cells):
-                                                    cell_id, text = sorted_cells[i]
-                                                    # Use the structure coordinates and the OCR text
-                                                    cell_data_with_coords.append({
-                                                        'text': text,
-                                                        'x_min': cell_info.get('x_min', 0),
-                                                        'y_min': cell_info.get('y_min', 0),
-                                                        'x_max': cell_info.get('x_max', 1),
-                                                        'y_max': cell_info.get('y_max', 1)
-                                                    })
-                                            
-                                            # If we have cell data, try to create a proper table structure
-                                            if cell_data_with_coords:
-                                                # For simplicity of this implementation, we'll sort cells by y-coordinate first
-                                                # (for rows) and then by x-coordinate (for columns) to simulate table structure
-                                                # This is a simplified approach - a robust implementation would use
-                                                # more sophisticated algorithms to determine table grid
-                                                
-                                                # Group cells by similar y-coordinates (rows)
-                                                # Use a simple approach with tolerance for y-coordinates
-                                                row_tolerance = 0.05  # Adjust based on coordinate system
-                                                rows = []
-                                                used_cells = set()
-                                                
-                                                for i, cell in enumerate(cell_data_with_coords):
-                                                    if i in used_cells:
-                                                        continue
-                                                    
-                                                    current_row = [cell]
-                                                    used_cells.add(i)
-                                                    
-                                                    # Find other cells with similar y_min (in the same row)
-                                                    for j, other_cell in enumerate(cell_data_with_coords):
-                                                        if j in used_cells:
-                                                            continue
-                                                        if abs(cell['y_min'] - other_cell['y_min']) < row_tolerance:
-                                                            current_row.append(other_cell)
-                                                            used_cells.add(j)
-                                                    
-                                                    # Sort cells in row by x-coordinate (left to right)
-                                                    current_row.sort(key=lambda c: c['x_min'])
-                                                    rows.append(current_row)
-                                                
-                                                # Now sort rows by y-coordinate (top to bottom)
-                                                rows.sort(key=lambda r: r[0]['y_min'] if r else 0)
-                                                
-                                                if rows:
-                                                    # Create markdown table
-                                                    if rows:
-                                                        # Create header row from first row if it looks like a header
-                                                        first_row = rows[0]
-                                                        headers = [cell['text'].strip() if cell['text'].strip() else " " for cell in first_row]
-                                                        header_row = "| " + " | ".join(headers) + " |"
-                                                        separator_row = "|" + "|".join([" --- " for _ in headers]) + "|"
-                                                        
-                                                        markdown_content.append(header_row)
-                                                        markdown_content.append(separator_row)
-                                                        
-                                                        # Add remaining rows
-                                                        for row in rows[1:]:
-                                                            row_data = [cell['text'].strip() if cell['text'].strip() else " " for cell in row]
-                                                            row_str = "| " + " | ".join(row_data) + " |"
-                                                            markdown_content.append(row_str)
-                                                else:
-                                                    # Fallback: if we cannot determine rows, just put all cells in one row
-                                                    all_texts = [cell['text'].strip() if cell['text'].strip() else " " for cell in cell_data_with_coords]
-                                                    if all_texts:
-                                                        header_row = "| " + " | ".join(all_texts) + " |"
-                                                        separator_row = "|" + "|".join([" --- " for _ in all_texts]) + "|"
-                                                        markdown_content.append(header_row)
-                                                        markdown_content.append(separator_row)
-                            else:
-                                # If no structure file, just display as list
-                                for source, text in sorted_cells:
-                                    if text.strip():
-                                        markdown_content.append(f"- {text.strip()}")
+                        # Format table content using the new utility function
+                        table_lines = format_markdown_table(element, content_texts)
+                        for line in table_lines:
+                            markdown_content.append(line)
+                    elif element_type == 'chart':
+                        # Format chart content using the new utility function
+                        chart_lines = format_markdown_chart(element, content_texts)
+                        for line in chart_lines:
+                            markdown_content.append(line)
                     else:
-                        # Handle non-table content as before
+                        # Handle non-chart, non-table content as before
                         for content in content_texts:
                             text = content.get('text', '')
                             if text.strip():
                                 markdown_content.append(f"- {text.strip()}")
-                
-                # Add bounding box info if available
-                bounding_box = element.get('bounding_box', {})
-                if bounding_box:
-                    markdown_content.append(f"> Bounding Box: ({bounding_box.get('x_min')}, {bounding_box.get('y_min')}) to ({bounding_box.get('x_max')}, {bounding_box.get('y_max')})")
-                
-                # Add image path if available (only sub-image paths, not original page images)  
-                sub_image_path = element.get('sub_image_path')
-                if sub_image_path:
-                    # Try to make the path relative to extracts directory for proper linking
-                    rel_path = os.path.relpath(sub_image_path, extract_dir) if extract_dir else os.path.basename(sub_image_path)
-                    markdown_content.append(f"> Image: `{rel_path}`")
                 
                 markdown_content.append("")  # Extra blank line between elements
         
