@@ -639,16 +639,113 @@ if __name__ == "__main__":
         
         print(f"Found {len(pdf_files)} PDF files to process: {pdf_files}")
         
-        # Process each PDF file
+        # Two-phase processing for multiple files:
+        # Phase 1: PDF extraction (text and images) for ALL files first
+        print("\nStarting Phase 1: PDF extraction for all files...")
+        extraction_results = []
+        
         for i, pdf_file in enumerate(pdf_files):
-            print(f"\nProcessing PDF {i+1}/{len(pdf_files)}: {pdf_file}")
+            print(f"\nPDF extraction {i+1}/{len(pdf_files)}: {pdf_file}")
             
             # Create a unique extract directory for each PDF following the new structure
             pdf_name = os.path.splitext(os.path.basename(pdf_file))[0]
             extract_dir = os.path.join("extracts", pdf_name)
             
-            result = extract(pdf_path=pdf_file, extract_dir=extract_dir, timing=True, pages_per_process=pages_per_process, max_processes=max_processes)
+            # Do just the PDF extraction part (text and images)
+            import shutil
+            import utils
             
+            # Generate default extract_dir based on the source PDF filename
+            source_fn = os.path.splitext(os.path.basename(pdf_file))[0]  # Get filename without extension
+            extract_dir = os.path.join("extracts", source_fn)
+
+            # Create extract directory and clean it if it already exists
+            if os.path.exists(extract_dir):
+                shutil.rmtree(extract_dir)
+            os.makedirs(extract_dir, exist_ok=True)
+
+            # Set up paths relative to extract directory
+            pages_dir = os.path.join(extract_dir, "pages")
+            texts_dir = os.path.join(extract_dir, "texts")
+            elements_dir = os.path.join(extract_dir, "page_elements")  # Default output_dir
+
+            # Create subdirectories in extract directory
+            os.makedirs(pages_dir, exist_ok=True)
+            os.makedirs(texts_dir, exist_ok=True)
+
+            # Extract text and images from PDF (the CPU-intensive part)
+            pdf_extraction_time = process_pdf_with_paths(pdf_path=pdf_file, texts_dir=texts_dir, pages_dir=pages_dir, pages_per_process=pages_per_process, max_processes=max_processes)
+            
+            # Store extraction results for phase 2
+            extraction_results.append({
+                'pdf_file': pdf_file,
+                'extract_dir': extract_dir,
+                'pages_dir': pages_dir,
+                'texts_dir': texts_dir,
+                'elements_dir': elements_dir,
+                'pdf_extraction_time': pdf_extraction_time
+            })
+            
+            print(f"Completed PDF extraction for {pdf_file}")
+        
+        print(f"\nPhase 1 completed: PDF extraction for all {len(pdf_files)} files done.")
+        
+        # Phase 2: AI processing for all files
+        print("\nStarting Phase 2: AI processing (element detection, OCR, etc.) for all files...")
+        
+        for i, extraction_result in enumerate(extraction_results):
+            pdf_file = extraction_result['pdf_file']
+            extract_dir = extraction_result['extract_dir']
+            pages_dir = extraction_result['pages_dir']
+            elements_dir = extraction_result['elements_dir']
+            pdf_extraction_time = extraction_result['pdf_extraction_time']
+            
+            print(f"\nAI processing {i+1}/{len(extraction_results)}: {pdf_file}")
+            
+            # Process page images to extract content elements with structure and OCR
+            ai_start_time = time.time()
+            utils.process_page_images(
+                pages_dir=pages_dir, 
+                output_dir=elements_dir, 
+                timing=True, 
+                ocr_titles=True, 
+                batch_processing=True, 
+                batch_size=20, 
+                pdf_extraction_time=pdf_extraction_time
+            )
+            ai_processing_time = time.time() - ai_start_time
+
+            # Create consolidated result object
+            result = get_all_extracted_content(pages_dir=pages_dir, output_dir=elements_dir)
+
+            # Generate markdown representation of the document
+            source_fn = os.path.splitext(os.path.basename(pdf_file))[0] if pdf_file else None
+            utils.save_document_markdown(result, extract_dir=extract_dir, source_fn=source_fn)
+
+            # Initialize timing variables for new stages
+            embeddings_time = 0
+            lancedb_time = 0
+
+            # Generate embeddings for the markdown content
+            if extract_dir and source_fn:
+                markdown_path = os.path.join(extract_dir, f"{source_fn}.md")
+                if os.path.exists(markdown_path):
+                    embedding_results, embeddings_time = utils.generate_embeddings_for_markdown(markdown_path)
+                    if embedding_results:
+                        utils.save_embeddings_to_json(embedding_results, extract_dir=extract_dir, source_fn=source_fn)
+                        
+                        # Save embeddings to LanceDB for queryable storage
+                        _, lancedb_time = utils.save_to_lancedb(embedding_results, extract_dir=extract_dir, source_fn=source_fn)
+
+            # Report timing if needed
+            total_time = time.time() - (time.time() - ai_start_time - pdf_extraction_time)  # Approximate
+            print(f"Overall processing completed for {pdf_file} in unknown seconds (extraction: {pdf_extraction_time:.2f}s, AI: {ai_processing_time:.2f}s)")
+            print(f"Breakdown for {pdf_file}:")
+            print(f"  PDF Extraction: {pdf_extraction_time:.2f}s")
+            print(f"  AI Processing (Elements, Structure, OCR): {ai_processing_time:.2f}s")
+            print(f"  Embedding Generation: {embeddings_time:.2f}s")
+            print(f"  LanceDB Indexing: {lancedb_time:.2f}s")
+
             # Print content summary for each PDF
             print(f"\nContent summary for {pdf_file}:")
             print("="*50)
@@ -679,7 +776,7 @@ if __name__ == "__main__":
             from utils import save_extracted_content_to_json
             save_extracted_content_to_json(result, extract_dir=extract_dir)
             
-            print(f"\nExtraction completed for {pdf_file}! Total elements found: {content_counts['total_elements']}")
+            print(f"\nProcessing completed for {pdf_file}! Total elements found: {content_counts['total_elements']}")
         
         print(f"\nCompleted processing all {len(pdf_files)} PDF files in {target_path}")
         
