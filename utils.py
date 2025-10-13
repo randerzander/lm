@@ -1789,8 +1789,8 @@ def save_to_lancedb(embedding_results, extract_dir=None, source_fn=None):
         # Convert to PyArrow table
         table_data = pa.Table.from_pylist(data, schema=schema)
         
-        # Create or overwrite the table
-        table_name = f"{source_fn}_pages" if source_fn else "document_pages"
+        # Use a single table for all documents
+        table_name = "all_documents"
         
         if table_name in db.table_names():
             # If table exists, open it and add the new data
