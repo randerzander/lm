@@ -1141,12 +1141,16 @@ def process_page_images(pages_dir="pages", output_dir="page_elements", timing=Fa
                 chart_structure_time += time.time() - start_time
             
             # Process the chart graphic elements batch results
-            # Each result in the batch results corresponds to one image in the same order
+            # Each batch result contains 'data' field with responses for all images in that batch
             all_batch_chart_elements = []
             for batch_result in chart_graphic_elements_batch_results:
-                if 'data' in batch_result:
-                    # Add the entire result for each image (not just the 'data' field)
-                    # since extract_graphic_elements returns the full response
+                # Each batch_result is the API response for one batch of images
+                # It should have a 'data' field containing a list of results for each image
+                if isinstance(batch_result, dict) and 'data' in batch_result and isinstance(batch_result['data'], list):
+                    # Add each individual result from this batch to our collection
+                    all_batch_chart_elements.extend(batch_result['data'])
+                else:
+                    # If the result doesn't have expected structure, add as single result
                     all_batch_chart_elements.append(batch_result)
             
             # Process each chart graphic elements result
