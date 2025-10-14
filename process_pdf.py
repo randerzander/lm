@@ -377,14 +377,42 @@ def extract(pdf_path="data/multimodal_test.pdf", output_dir="page_elements", ext
         # Generate final comprehensive timing summary at the end
         if timing and 'timing_data' in locals() and timing_data:
             total_time = time.time() - start_time
+            # Calculate percentages
+            pdf_extraction_pct = (pdf_extraction_time / total_time) * 100 if total_time > 0 else 0
+            page_elements_pct = (page_elements_time / total_time) * 100 if total_time > 0 else 0
+            table_structure_pct = (table_structure_time / total_time) * 100 if total_time > 0 else 0
+            chart_structure_pct = (chart_structure_time / total_time) * 100 if total_time > 0 else 0
+            ocr_pct = (ocr_time / total_time) * 100 if total_time > 0 else 0
+            embeddings_pct = (embeddings_time / total_time) * 100 if total_time > 0 else 0
+            lancedb_pct = (lancedb_time / total_time) * 100 if total_time > 0 else 0
+            
+            # Get OCR task counts for breakdown
+            ocr_task_counts = timing_data.get('ocr_task_counts', {'table_cells': 0, 'chart_elements': 0, 'titles': 0})
+            total_ocr_tasks = ocr_task_counts['table_cells'] + ocr_task_counts['chart_elements'] + ocr_task_counts['titles']
+            
             print(f"Timing Summary:")
-            print(f"  PDF Extraction: {pdf_extraction_time:.2f}s")
-            print(f"  Page Elements Inference: {page_elements_time:.2f}s")
-            print(f"  Table Structure: {table_structure_time:.2f}s")
-            print(f"  Chart Structure: {chart_structure_time:.2f}s")
-            print(f"  OCR: {ocr_time:.2f}s")
-            print(f"  Embedding Generation: {embeddings_time:.2f}s")
-            print(f"  LanceDB Indexing: {lancedb_time:.2f}s")
+            print(f"  PDF Extraction: {pdf_extraction_time:.2f}s ({pdf_extraction_pct:.1f}%)")
+            print(f"  Page Elements Inference: {page_elements_time:.2f}s ({page_elements_pct:.1f}%)")
+            print(f"  Table Structure: {table_structure_time:.2f}s ({table_structure_pct:.1f}%)")
+            print(f"  Chart Structure: {chart_structure_time:.2f}s ({chart_structure_pct:.1f}%)")
+            
+            # OCR with content type breakdown
+            if total_ocr_tasks > 0:
+                print(f"  OCR: {ocr_time:.2f}s ({ocr_pct:.1f}%) - breakdown:")
+                if ocr_task_counts['titles'] > 0:
+                    title_pct = (ocr_task_counts['titles'] / total_ocr_tasks) * 100
+                    print(f"    Titles: {ocr_task_counts['titles']} tasks ({title_pct:.1f}%)")
+                if ocr_task_counts['table_cells'] > 0:
+                    cell_pct = (ocr_task_counts['table_cells'] / total_ocr_tasks) * 100
+                    print(f"    Table Cells: {ocr_task_counts['table_cells']} tasks ({cell_pct:.1f}%)")
+                if ocr_task_counts['chart_elements'] > 0:
+                    chart_pct = (ocr_task_counts['chart_elements'] / total_ocr_tasks) * 100
+                    print(f"    Chart Elements: {ocr_task_counts['chart_elements']} tasks ({chart_pct:.1f}%)")
+            else:
+                print(f"  OCR: {ocr_time:.2f}s ({ocr_pct:.1f}%)")
+                
+            print(f"  Embedding Generation: {embeddings_time:.2f}s ({embeddings_pct:.1f}%)")
+            print(f"  LanceDB Indexing: {lancedb_time:.2f}s ({lancedb_pct:.1f}%)")
             print(f"  Total: {total_time:.2f}s")
         elif timing:
             # Fallback for when timing is disabled

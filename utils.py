@@ -1392,8 +1392,13 @@ def process_page_images(pages_dir="pages", output_dir="page_elements", timing=Fa
                 except Exception as e_individual:
                     print(f"Error processing graphic elements for {temp_path}: {str(e_individual)}")
     
+    # Count OCR tasks by type
+    num_table_cell_ocr_tasks = len(table_cell_ocr_tasks)
+    num_chart_element_ocr_tasks = len(chart_element_ocr_tasks)
+    num_title_ocr_tasks = len(title_ocr_tasks) if ocr_titles else 0
+    
     # Now process all the OCR tasks in batches
-    # print(f"DEBUG: Preparing OCR tasks - Table cell tasks: {len(table_cell_ocr_tasks)}, Chart element tasks: {len(chart_element_ocr_tasks)}, Title tasks: {len(title_ocr_tasks) if ocr_titles else 0}")
+    # print(f"DEBUG: Preparing OCR tasks - Table cell tasks: {num_table_cell_ocr_tasks}, Chart element tasks: {num_chart_element_ocr_tasks}, Title tasks: {num_title_ocr_tasks}")
     all_ocr_tasks = []
     all_ocr_tasks.extend(table_cell_ocr_tasks)
     all_ocr_tasks.extend(chart_element_ocr_tasks)
@@ -1490,7 +1495,12 @@ def process_page_images(pages_dir="pages", output_dir="page_elements", timing=Fa
             'table_structure_time': table_structure_time,
             'chart_structure_time': chart_structure_time,
             'ocr_time': ocr_time,
-            'ai_processing_time': page_elements_time + table_structure_time + chart_structure_time + ocr_time
+            'ai_processing_time': page_elements_time + table_structure_time + chart_structure_time + ocr_time,
+            'ocr_task_counts': {
+                'table_cells': num_table_cell_ocr_tasks,
+                'chart_elements': num_chart_element_ocr_tasks,
+                'titles': num_title_ocr_tasks
+            }
         }
     return None
 
