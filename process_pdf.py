@@ -562,7 +562,9 @@ def print_content_summary(output_dir="page_elements"):
     # Print summary
     print("Content Summary:")
     print("================")
-    content_str = ", ".join([f"{content_type}s: {count}" for content_type, count in content_type_counts.items()])
+    # Sort content types by count in descending order
+    sorted_content_types = sorted(content_type_counts.items(), key=lambda x: x[1], reverse=True)
+    content_str = ", ".join([f"{content_type}s: {count}" for content_type, count in sorted_content_types])
     # Get text statistics
     text_stats = get_text_stats(output_dir)
     print(f"{content_str} | Total elements: {total_elements}, Words: {text_stats['text_stats']['words']}, Characters: {text_stats['text_stats']['chars']}, Lines: {text_stats['text_stats']['lines']}")
@@ -833,7 +835,8 @@ if __name__ == "__main__":
         content_counts = get_content_counts_with_text_stats(f"{output_dir}/page_elements")
         
         print("Per-Page Breakdown:")
-        for page_name, page_stats in content_counts['pages'].items():
+        # Sort pages in ascending order (e.g., page_001, page_002, page_003)
+        for page_name, page_stats in sorted(content_counts['pages'].items()):
             content_str = ", ".join([f"{content_type}s: {count}" for content_type, count in page_stats['content_types'].items()])
             print(f"  {page_name}: {content_str} | Words: {page_stats['text_stats']['words']}, Characters: {page_stats['text_stats']['chars']}, Lines: {page_stats['text_stats']['lines']}")
         
