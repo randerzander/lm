@@ -360,13 +360,11 @@ def extract(pdf_path="data/multimodal_test.pdf", output_dir="page_elements", ext
                 # Save embeddings to LanceDB for queryable storage
                 _, lancedb_time = utils.save_to_lancedb(embedding_results, extract_dir=extract_dir, source_fn=source_fn)
     
-    # Report timing if requested
+    # Report overall timing if requested
     if timing:
         total_time = time.time() - start_time
         print(f"Overall processing completed in {total_time:.2f} seconds")
-        print(f"Breakdown:")
         print(f"  PDF Extraction: {pdf_extraction_time:.2f}s")
-        print(f"  AI Processing (Elements, Structure, OCR): {ai_processing_time:.2f}s")
         print(f"  Embedding Generation: {embeddings_time:.2f}s")
         print(f"  LanceDB Indexing: {lancedb_time:.2f}s")
     
