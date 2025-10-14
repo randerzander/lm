@@ -334,7 +334,7 @@ def extract(pdf_path="data/multimodal_test.pdf", output_dir="page_elements", ext
     
     # Step 2: Process page images to extract content elements with structure and OCR
     import utils
-    timing_data = utils.process_page_images(pages_dir=pages_dir, output_dir=elements_dir, timing=timing, ocr_titles=ocr_titles, batch_processing=True, batch_size=20, pdf_extraction_time=pdf_extraction_time, print_timing_summary=False)
+    timing_data = utils.process_page_images(pages_dir=pages_dir, output_dir=elements_dir, timing=timing, ocr_titles=ocr_titles, batch_processing=True, batch_size=25, pdf_extraction_time=pdf_extraction_time, print_timing_summary=False)
     if timing_data:
         page_elements_time = timing_data['page_elements_time']
         table_structure_time = timing_data['table_structure_time']
@@ -754,7 +754,7 @@ if __name__ == "__main__":
                 timing=True, 
                 ocr_titles=True, 
                 batch_processing=True, 
-                batch_size=20, 
+                batch_size=25, 
                 pdf_extraction_time=pdf_extraction_time
             )
             ai_processing_time = time.time() - ai_start_time

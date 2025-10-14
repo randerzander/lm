@@ -476,7 +476,7 @@ def extract_ocr_text(image_path, api_key=None):
         response.raise_for_status()
 
 
-def extract_ocr_text_batch(image_paths, api_key=None, batch_size=20, parallel=True, max_workers=None):
+def extract_ocr_text_batch(image_paths, api_key=None, batch_size=25, parallel=True, max_workers=None):
     """
     Extract text from multiple images using NVIDIA OCR API in batches.
     
@@ -484,7 +484,7 @@ def extract_ocr_text_batch(image_paths, api_key=None, batch_size=20, parallel=Tr
         image_paths (list): List of paths to image files
         api_key (str, optional): API key for authorization. If not provided, 
                                 assumes running in NGC environment
-        batch_size (int): Number of images to process in each batch (default: 20)
+        batch_size (int): Number of images to process in each batch (default: 25)
         parallel (bool): Whether to process batches in parallel (default: True)
         max_workers (int, optional): Maximum number of worker threads for parallel processing
     
@@ -654,7 +654,7 @@ def extract_graphic_elements_batch(image_paths, api_key=None, batch_size=5):
         "graphic elements"
     )
 
-def process_page_images(pages_dir="pages", output_dir="page_elements", timing=False, ocr_titles=True, batch_processing=True, batch_size=20, pdf_extraction_time=0, print_timing_summary=True):
+def process_page_images(pages_dir="pages", output_dir="page_elements", timing=False, ocr_titles=True, batch_processing=True, batch_size=25, pdf_extraction_time=0, print_timing_summary=True):
     # Track all timing values to return when needed
     page_elements_time = 0
     table_structure_time = 0
@@ -672,7 +672,7 @@ def process_page_images(pages_dir="pages", output_dir="page_elements", timing=Fa
         timing (bool): Whether to track and report timing for each stage
         ocr_titles (bool): Whether to perform OCR on title elements, defaults to True
         batch_processing (bool): Whether to use batch processing for API calls (default: True)
-        batch_size (int): Batch size for API calls (default: 20)
+        batch_size (int): Batch size for API calls (default: 25)
         pdf_extraction_time (float): Time taken for PDF extraction (default: 0)
     """
     # Initialize timing variables
@@ -2369,7 +2369,7 @@ def generate_embeddings_for_markdown(markdown_file_path, api_key=None):
     results = _make_embedding_batch_request(
         filtered_sections,
         client,
-        batch_size=20,  # Reasonable batch size to stay within API limits
+        batch_size=25,  # Reasonable batch size to stay within API limits
         api_description="embeddings"
     )
     
