@@ -594,6 +594,66 @@ def extract_graphic_elements(image_path, api_key=None):
         print(f"Graphic elements API request failed with status {response.status_code}: {response.text}")
         response.raise_for_status()
 
+def extract_graphic_elements_batch(image_paths, api_key=None, batch_size=5):
+    """
+    Extract graphic elements from multiple images using NVIDIA AI API in batches.
+    
+    Args:
+        image_paths (list): List of paths to image files
+        api_key (str, optional): API key for authorization. If not provided, 
+                                assumes running in NGC environment
+        batch_size (int): Number of images to process in each batch (default: 5)
+    
+    Returns:
+        list: List of JSON responses containing graphic elements information for each image
+    """
+    invoke_url = "https://ai.api.nvidia.com/v1/cv/nvidia/nemoretriever-graphic-elements-v1"
+    
+    # Set authorization header
+    # If api_key is None, try to get it from environment variable
+    if api_key is None:
+        api_key = os.getenv('NVIDIA_API_KEY')
+    
+    if api_key:
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Accept": "application/json"
+        }
+    else:
+        headers = {
+            "Authorization": "Bearer $API_KEY_REQUIRED_IF_EXECUTING_OUTSIDE_NGC",
+            "Accept": "application/json"
+        }
+
+    def payload_processor(batch_paths):
+        inputs = []
+        for img_path in batch_paths:
+            with open(img_path, "rb") as f:
+                image_b64 = base64.b64encode(f.read()).decode()
+            
+            assert len(image_b64) < 180_000, \
+              f"Image {img_path} is too large. To upload larger images, use the assets API (see docs)"
+            
+            inputs.append({
+                "type": "image_url",
+                "url": f"data:image/jpeg;base64,{image_b64}"
+            })
+        
+        return {"input": inputs}
+
+    def result_processor(batch_result):
+        return batch_result
+
+    return _make_batch_request(
+        image_paths, 
+        invoke_url, 
+        headers, 
+        batch_size, 
+        payload_processor, 
+        result_processor, 
+        "graphic elements"
+    )
+
 def process_page_images(pages_dir="pages", output_dir="page_elements", timing=False, ocr_titles=True, batch_processing=True, batch_size=20, pdf_extraction_time=0):
     """
     Process all page images in the specified directory, extract content elements,
@@ -630,6 +690,7 @@ def process_page_images(pages_dir="pages", output_dir="page_elements", timing=Fa
     table_structure_tasks = []
     table_cell_ocr_tasks = []
     chart_element_ocr_tasks = []
+    chart_graphic_elements_tasks = []  # New list for chart graphic elements
     title_ocr_tasks = []
     
     # Process all page images
@@ -722,72 +783,19 @@ def process_page_images(pages_dir="pages", output_dir="page_elements", timing=Fa
                                             'element_with_type': element_with_type
                                         })
                                     
-                                    # If this is a chart, extract graphic elements
+                                    # If this is a chart, track for graphic elements extraction (to be processed in batches)
                                     elif content_type == 'chart':
                                         # Save the cropped image temporarily for API call
                                         temp_chart_path = image_filename.replace('.jpg', '_for_api.jpg')
                                         cropped_image.save(temp_chart_path, "JPEG", quality=80)
                                         
-                                        # Extract graphic elements from the chart
-                                        try:
-                                            if timing:
-                                                start_time = time.time()
-                                            graphic_elements = extract_graphic_elements(temp_chart_path, api_key)
-                                            if timing:
-                                                chart_structure_time += time.time() - start_time
-                                            
-                                            # Save the graphic elements as a JSON file
-                                            elements_filename = image_filename.replace('.jpg', '_elements.json')
-                                            with open(elements_filename, 'w') as f:
-                                                json.dump(graphic_elements, f, indent=2)
-                                            
-                                            # Add elements file path to the element data
-                                            element_with_type['elements_path'] = elements_filename
-                                            
-                                            # Create a subdirectory for chart elements
-                                            chart_elements_dir = image_filename.replace('.jpg', '_elements')
-                                            os.makedirs(chart_elements_dir, exist_ok=True)
-                                            
-                                            # Extract element images from graphic elements
-                                            if 'data' in graphic_elements and graphic_elements['data']:
-                                                for page_elements in graphic_elements['data']:
-                                                    if 'bounding_boxes' in page_elements:
-                                                        # Process all types of graphic elements (labels, axes, etc.)
-                                                        for elem_type, elem_list in page_elements['bounding_boxes'].items():
-                                                            if elem_list and isinstance(elem_list, list):
-                                                                # Get the dimensions of the cropped chart image to convert normalized coordinates
-                                                                chart_width, chart_height = cropped_image.size
-                                                                
-                                                                for elem_idx, elem in enumerate(elem_list):
-                                                                    if 'x_min' in elem and 'y_min' in elem and 'x_max' in elem and 'y_max' in elem:
-                                                                        # Calculate pixel coordinates from normalized coordinates
-                                                                        elem_x_min = int(elem['x_min'] * chart_width)
-                                                                        elem_y_min = int(elem['y_min'] * chart_height)
-                                                                        elem_x_max = int(elem['x_max'] * chart_width)
-                                                                        elem_y_max = int(elem['y_max'] * chart_height)
-                                                                        
-                                                                        # Ensure coordinates are within image bounds
-                                                                        elem_x_min = max(0, elem_x_min)
-                                                                        elem_y_min = max(0, elem_y_min)
-                                                                        elem_x_max = min(chart_width, elem_x_max)
-                                                                        elem_y_max = min(chart_height, elem_y_max)
-                                                                        
-                                                                        # Crop the element from the chart image
-                                                                        if elem_x_max > elem_x_min and elem_y_max > elem_y_min:
-                                                                            elem_image = cropped_image.crop((elem_x_min, elem_y_min, elem_x_max, elem_y_max))
-                                                                            
-                                                                            # Create filename for the element image
-                                                                            base_name = os.path.basename(image_filename).replace('.jpg', '')
-                                                                            elem_image_filename = os.path.join(chart_elements_dir, f"{base_name}_{elem_type}_{elem_idx+1}.jpg")
-                                                                            elem_image.save(elem_image_filename, "JPEG", quality=90)
-                                                                            
-                                                                            # Add chart element image to OCR tasks to process later in batches
-                                                                            chart_element_ocr_tasks.append(elem_image_filename)
-                                            
-                                            # Remove temporary image used for API call
-                                            os.remove(temp_chart_path)
-                                        except Exception as e:
-                                            print(f"Error extracting graphic elements for {image_filename}: {str(e)}")
+                                        # Add chart graphic elements task to be processed in batch later
+                                        chart_graphic_elements_tasks.append({
+                                            'temp_path': temp_chart_path,
+                                            'image_path': image_filename,
+                                            'cropped_image': cropped_image,
+                                            'element_with_type': element_with_type
+                                        })
                                     
                                     # If this is a title, track the image for OCR if requested
                                     elif content_type == 'title':
@@ -1116,6 +1124,167 @@ def process_page_images(pages_dir="pages", output_dir="page_elements", timing=Fa
                         os.remove(temp_path)
                 except Exception as e_individual:
                     print(f"Error processing table structure for {temp_path}: {str(e_individual)}")
+
+    # Now process all the chart graphic elements tasks in batches
+    if chart_graphic_elements_tasks:
+        print(f"Processing {len(chart_graphic_elements_tasks)} chart graphic elements tasks in parallel batches...")
+        
+        # Extract the temporary image paths to process in batch
+        temp_paths = [task['temp_path'] for task in chart_graphic_elements_tasks]
+        
+        try:
+            if timing:
+                start_time = time.time()
+            # Process all chart graphic elements batches in parallel
+            chart_graphic_elements_batch_results = extract_graphic_elements_batch(temp_paths, api_key, batch_size)
+            if timing:
+                chart_structure_time += time.time() - start_time
+            
+            # Process the chart graphic elements batch results
+            # Each result in the batch results corresponds to one image in the same order
+            all_batch_chart_elements = []
+            for batch_result in chart_graphic_elements_batch_results:
+                if 'data' in batch_result:
+                    # Add the entire result for each image (not just the 'data' field)
+                    # since extract_graphic_elements returns the full response
+                    all_batch_chart_elements.append(batch_result)
+            
+            # Process each chart graphic elements result
+            for task_idx, task in enumerate(chart_graphic_elements_tasks):
+                temp_path = task['temp_path']
+                image_path = task['image_path']
+                cropped_image = task['cropped_image']
+                element_with_type = task['element_with_type']
+                
+                if task_idx < len(all_batch_chart_elements):
+                    # all_batch_chart_elements contains the full graphic elements response for each image
+                    chart_elements = all_batch_chart_elements[task_idx]
+                else:
+                    # Fallback: process individually if batch results don't match
+                    print(f"Batch result mismatch for {temp_path}, processing individually")
+                    chart_elements = extract_graphic_elements(temp_path, api_key)  # This is the full result
+                
+                # Save the graphic elements as a JSON file
+                elements_filename = image_path.replace('.jpg', '_elements.json')
+                with open(elements_filename, 'w') as f:
+                    json.dump(chart_elements, f, indent=2)
+                
+                # Add elements file path to the element data
+                element_with_type['elements_path'] = elements_filename
+                
+                # Create a subdirectory for chart elements
+                chart_elements_dir = image_path.replace('.jpg', '_elements')
+                os.makedirs(chart_elements_dir, exist_ok=True)
+                
+                # Extract element images from graphic elements
+                if 'data' in chart_elements and chart_elements['data']:
+                    for page_elements in chart_elements['data']:
+                        if 'bounding_boxes' in page_elements:
+                            # Process all types of graphic elements (labels, axes, etc.)
+                            for elem_type, elem_list in page_elements['bounding_boxes'].items():
+                                if elem_list and isinstance(elem_list, list):
+                                    # Get the dimensions of the cropped chart image to convert normalized coordinates
+                                    chart_width, chart_height = cropped_image.size
+                                    
+                                    for elem_idx, elem in enumerate(elem_list):
+                                        if 'x_min' in elem and 'y_min' in elem and 'x_max' in elem and 'y_max' in elem:
+                                            # Calculate pixel coordinates from normalized coordinates
+                                            elem_x_min = int(elem['x_min'] * chart_width)
+                                            elem_y_min = int(elem['y_min'] * chart_height)
+                                            elem_x_max = int(elem['x_max'] * chart_width)
+                                            elem_y_max = int(elem['y_max'] * chart_height)
+                                            
+                                            # Ensure coordinates are within image bounds
+                                            elem_x_min = max(0, elem_x_min)
+                                            elem_y_min = max(0, elem_y_min)
+                                            elem_x_max = min(chart_width, elem_x_max)
+                                            elem_y_max = min(chart_height, elem_y_max)
+                                            
+                                            # Crop the element from the chart image
+                                            if elem_x_max > elem_x_min and elem_y_max > elem_y_min:
+                                                elem_image = cropped_image.crop((elem_x_min, elem_y_min, elem_x_max, elem_y_max))
+                                                
+                                                # Create filename for the element image
+                                                base_name = os.path.basename(image_path).replace('.jpg', '')
+                                                elem_image_filename = os.path.join(chart_elements_dir, f"{base_name}_{elem_type}_{elem_idx+1}.jpg")
+                                                elem_image.save(elem_image_filename, "JPEG", quality=90)
+                                                
+                                                # Add chart element image to OCR tasks to process later in batches
+                                                chart_element_ocr_tasks.append(elem_image_filename)
+                
+                # Remove temporary image used for API call
+                if os.path.exists(temp_path):
+                    os.remove(temp_path)
+        except Exception as e:
+            print(f"Error processing chart graphic elements batches in parallel: {str(e)}")
+            print("Falling back to sequential processing...")
+            # Fall back to sequential processing if parallel processing fails
+            for task in chart_graphic_elements_tasks:
+                temp_path = task['temp_path']
+                image_path = task['image_path']
+                cropped_image = task['cropped_image']
+                element_with_type = task['element_with_type']
+                
+                try:
+                    if timing:
+                        start_time = time.time()
+                    chart_elements = extract_graphic_elements(temp_path, api_key)
+                    if timing:
+                        chart_structure_time += time.time() - start_time
+                    
+                    # Save the graphic elements as a JSON file
+                    elements_filename = image_path.replace('.jpg', '_elements.json')
+                    with open(elements_filename, 'w') as f:
+                        json.dump(chart_elements, f, indent=2)
+                    
+                    # Add elements file path to the element data
+                    element_with_type['elements_path'] = elements_filename
+                    
+                    # Create a subdirectory for chart elements
+                    chart_elements_dir = image_path.replace('.jpg', '_elements')
+                    os.makedirs(chart_elements_dir, exist_ok=True)
+                    
+                    # Extract element images from graphic elements
+                    if 'data' in chart_elements and chart_elements['data']:
+                        for page_elements in chart_elements['data']:
+                            if 'bounding_boxes' in page_elements:
+                                # Process all types of graphic elements (labels, axes, etc.)
+                                for elem_type, elem_list in page_elements['bounding_boxes'].items():
+                                    if elem_list and isinstance(elem_list, list):
+                                        # Get the dimensions of the cropped chart image to convert normalized coordinates
+                                        chart_width, chart_height = cropped_image.size
+                                        
+                                        for elem_idx, elem in enumerate(elem_list):
+                                            if 'x_min' in elem and 'y_min' in elem and 'x_max' in elem and 'y_max' in elem:
+                                                # Calculate pixel coordinates from normalized coordinates
+                                                elem_x_min = int(elem['x_min'] * chart_width)
+                                                elem_y_min = int(elem['y_min'] * chart_height)
+                                                elem_x_max = int(elem['x_max'] * chart_width)
+                                                elem_y_max = int(elem['y_max'] * chart_height)
+                                                
+                                                # Ensure coordinates are within image bounds
+                                                elem_x_min = max(0, elem_x_min)
+                                                elem_y_min = max(0, elem_y_min)
+                                                elem_x_max = min(chart_width, elem_x_max)
+                                                elem_y_max = min(chart_height, elem_y_max)
+                                                
+                                                # Crop the element from the chart image
+                                                if elem_x_max > elem_x_min and elem_y_max > elem_y_min:
+                                                    elem_image = cropped_image.crop((elem_x_min, elem_y_min, elem_x_max, elem_y_max))
+                                                    
+                                                    # Create filename for the element image
+                                                    base_name = os.path.basename(image_path).replace('.jpg', '')
+                                                    elem_image_filename = os.path.join(chart_elements_dir, f"{base_name}_{elem_type}_{elem_idx+1}.jpg")
+                                                    elem_image.save(elem_image_filename, "JPEG", quality=90)
+                                                    
+                                                    # Add chart element image to OCR tasks to process later in batches
+                                                    chart_element_ocr_tasks.append(elem_image_filename)
+                    
+                    # Remove temporary image used for API call
+                    if os.path.exists(temp_path):
+                        os.remove(temp_path)
+                except Exception as e_individual:
+                    print(f"Error processing graphic elements for {temp_path}: {str(e_individual)}")
     
     # Now process all the OCR tasks in batches
     all_ocr_tasks = []
