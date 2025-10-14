@@ -1872,54 +1872,84 @@ def get_all_extracted_content(pages_dir="pages", output_dir="page_elements"):
                             # Handle content-specific data
                             if content_type == 'table':
                                 # Get table structure and cell data
-                                if 'structure_path' in element_data and os.path.exists(element_data['structure_path']):
-                                    with open(element_data['structure_path'], 'r') as struct_file:
+                                # Try to find structure path based on sub_image_path if structure_path field doesn't exist
+                                structure_path = element_data.get('structure_path')
+                                if not structure_path and 'sub_image_path' in element_data and element_data['sub_image_path']:
+                                    potential_structure_path = element_data['sub_image_path'].replace('.jpg', '_structure.json').replace('.png', '_structure.json')
+                                    if os.path.exists(potential_structure_path):
+                                        structure_path = potential_structure_path
+                                
+                                if structure_path and os.path.exists(structure_path):
+                                    with open(structure_path, 'r') as struct_file:
                                         struct_data = json.load(struct_file)
                                         
                                         # Add table structure info
-                                        element_record['table_structure_path'] = element_data['structure_path']
+                                        element_record['table_structure_path'] = structure_path
                                         
-                                        # Process cells if available
-                                        if 'data' in struct_data and struct_data['data']:
-                                            for page_struct in struct_data['data']:
-                                                if 'bounding_boxes' in page_struct and 'cell' in page_struct['bounding_boxes']:
-                                                    cells = page_struct['bounding_boxes']['cell']
+                                        # Process cells from the bounding_boxes directly (not from a 'data' array)
+                                        if 'bounding_boxes' in struct_data and 'cell' in struct_data['bounding_boxes']:
+                                            cells = struct_data['bounding_boxes']['cell']
+                                            
+                                            # Get cell images and OCR text
+                                            cells_dir = element_data['sub_image_path'].replace('.jpg', '_cells').replace('.png', '_cells')
+                                            if os.path.exists(cells_dir):
+                                                # Process all potential cell files based on the structure data
+                                                for cell_idx, cell in enumerate(cells):
+                                                    cell_image_path = os.path.join(cells_dir, f"{os.path.basename(element_data['sub_image_path']).replace('.jpg', '').replace('.png', '')}_cell_{cell_idx+1}.jpg")
+                                                    ocr_path = cell_image_path.replace('.jpg', '_ocr.json')
                                                     
-                                                    # Get cell images and OCR text
-                                                    cells_dir = element_data['sub_image_path'].replace('.jpg', '_cells')
-                                                    if os.path.exists(cells_dir):
-                                                        for cell_idx, cell in enumerate(cells):
-                                                            cell_image_path = os.path.join(cells_dir, f"{os.path.basename(element_data['sub_image_path']).replace('.jpg', '')}_cell_{cell_idx+1}.jpg")
-                                                            ocr_path = cell_image_path.replace('.jpg', '_ocr.json')
-                                                            
-                                                            if os.path.exists(cell_image_path):
-                                                                element_record['related_images'].append(cell_image_path)
-                                                                
-                                                                # Extract OCR text if available
-                                                                if os.path.exists(ocr_path):
-                                                                    with open(ocr_path, 'r') as ocr_file:
-                                                                        ocr_data = json.load(ocr_file)
-                                                                        if 'data' in ocr_data and ocr_data['data']:
-                                                                            for ocr_item in ocr_data['data']:
-                                                                                if 'text_detections' in ocr_item:
-                                                                                    for text_det in ocr_item['text_detections']:
-                                                                                        element_record['content_texts'].append({
-                                                                                            'text': text_det['text_prediction']['text'],
-                                                                                            'confidence': text_det['text_prediction']['confidence'],
-                                                                                            'source': f"cell_{cell_idx+1}",
-                                                                                            'bounding_box': text_det.get('bounding_box')
-                                                                                        })
+                                                    if os.path.exists(cell_image_path):
+                                                        element_record['related_images'].append(cell_image_path)
+                                                        
+                                                        # Extract OCR text if available
+                                                        if os.path.exists(ocr_path):
+                                                            with open(ocr_path, 'r') as ocr_file:
+                                                                ocr_data = json.load(ocr_file)
+                                                                if 'data' in ocr_data and ocr_data['data']:
+                                                                    for ocr_item in ocr_data['data']:
+                                                                        if 'text_detections' in ocr_item:
+                                                                            for text_det in ocr_item['text_detections']:
+                                                                                element_record['content_texts'].append({
+                                                                                    'text': text_det['text_prediction']['text'],
+                                                                                    'confidence': text_det['text_prediction']['confidence'],
+                                                                                    'source': f"cell_{cell_idx+1}",
+                                                                                    'bounding_box': text_det.get('bounding_box')
+                                                                                })
+                                
+                                # Also try to find text content from the main table image OCR
+                                if 'sub_image_path' in element_data and element_data['sub_image_path']:
+                                    table_ocr_path = element_data['sub_image_path'].replace('.jpg', '_ocr.json').replace('.png', '_ocr.json')
+                                    if os.path.exists(table_ocr_path):
+                                        with open(table_ocr_path, 'r') as ocr_file:
+                                            ocr_data = json.load(ocr_file)
+                                            if 'data' in ocr_data and ocr_data['data']:
+                                                for ocr_item in ocr_data['data']:
+                                                    if 'text_detections' in ocr_item:
+                                                        for text_det in ocr_item['text_detections']:
+                                                            element_record['content_texts'].append({
+                                                                'text': text_det['text_prediction']['text'],
+                                                                'confidence': text_det['text_prediction']['confidence'],
+                                                                'source': 'table_main',
+                                                                'bounding_box': text_det.get('bounding_box')
+                                                            })
                                 
                                 # Add to tables list
                                 result['content_elements']['tables'].append(element_record)
                                 
                             elif content_type == 'chart':
-                                # Get chart elements and OCR text
-                                if 'elements_path' in element_data and os.path.exists(element_data['elements_path']):
-                                    element_record['chart_elements_path'] = element_data['elements_path']
+                                # Try to find elements path based on sub_image_path if elements_path field doesn't exist
+                                elements_path = element_data.get('elements_path')
+                                if not elements_path and 'sub_image_path' in element_data and element_data['sub_image_path']:
+                                    potential_elements_path = element_data['sub_image_path'].replace('.jpg', '_elements.json').replace('.png', '_elements.json')
+                                    if os.path.exists(potential_elements_path):
+                                        elements_path = potential_elements_path
+                                
+                                # Add chart elements with fallback content extraction
+                                if elements_path and os.path.exists(elements_path):
+                                    element_record['chart_elements_path'] = elements_path
                                     
                                     # Get chart element images and OCR
-                                    elements_dir = element_data['sub_image_path'].replace('.jpg', '_elements')
+                                    elements_dir = element_data['sub_image_path'].replace('.jpg', '_elements').replace('.png', '_elements')
                                     if os.path.exists(elements_dir):
                                         # Collect all element images in this directory
                                         for elem_file in glob(os.path.join(elements_dir, "*.jpg")):
@@ -1940,6 +1970,23 @@ def get_all_extracted_content(pages_dir="pages", output_dir="page_elements"):
                                                                         'source': os.path.basename(elem_file),
                                                                         'bounding_box': text_det.get('bounding_box')
                                                                     })
+                                
+                                # Also try to find text content from the main chart image OCR
+                                if 'sub_image_path' in element_data and element_data['sub_image_path']:
+                                    chart_ocr_path = element_data['sub_image_path'].replace('.jpg', '_ocr.json').replace('.png', '_ocr.json')
+                                    if os.path.exists(chart_ocr_path):
+                                        with open(chart_ocr_path, 'r') as ocr_file:
+                                            ocr_data = json.load(ocr_file)
+                                            if 'data' in ocr_data and ocr_data['data']:
+                                                for ocr_item in ocr_data['data']:
+                                                    if 'text_detections' in ocr_item:
+                                                        for text_det in ocr_item['text_detections']:
+                                                            element_record['content_texts'].append({
+                                                                'text': text_det['text_prediction']['text'],
+                                                                'confidence': text_det['text_prediction']['confidence'],
+                                                                'source': 'chart_main',
+                                                                'bounding_box': text_det.get('bounding_box')
+                                                            })
                                 
                                 # Add to charts list
                                 result['content_elements']['charts'].append(element_record)
@@ -2019,32 +2066,33 @@ def format_markdown_table(element, content_texts):
                 struct_data = json.load(struct_file)
 
             # Extract table structure to determine rows and columns
-            if 'data' in struct_data and struct_data['data']:
-                for page_struct in struct_data['data']:
-                    if 'bounding_boxes' in page_struct and 'cell' in page_struct['bounding_boxes']:
-                        cells = page_struct['bounding_boxes']['cell']
+            # The structure is direct in the file, not in a 'data' array
+            if 'bounding_boxes' in struct_data and 'cell' in struct_data['bounding_boxes']:
+                cells = struct_data['bounding_boxes']['cell']
 
-                        # Now we'll use both the structure information and the OCR content
-                        # to build a proper markdown table
+                # Now we'll use both the structure information and the OCR content
+                # to build a proper markdown table
 
-                        # For a proper markdown table, we need to determine the grid structure
-                        # from the cell coordinates. Since this is complex, we'll implement
-                        # a simplified version that attempts to organize cells into rows.
+                # For a proper markdown table, we need to determine the grid structure
+                # from the cell coordinates. Since this is complex, we'll implement
+                # a simplified version that attempts to organize cells into rows.
 
-                        # First, let's get the cell data with coordinates if available
-                        # and the actual OCR text content
-                        cell_data_with_coords = []
-                        for i, cell_info in enumerate(cells):
-                            if i < len(sorted_cells):
-                                cell_id, text = sorted_cells[i]
-                                # Use the structure coordinates and the OCR text
-                                cell_data_with_coords.append({
-                                    'text': text,
-                                    'x_min': cell_info.get('x_min', 0),
-                                    'y_min': cell_info.get('y_min', 0),
-                                    'x_max': cell_info.get('x_max', 1),
-                                    'y_max': cell_info.get('y_max', 1)
-                                })
+                # First, let's get the cell data with coordinates if available
+                # and the actual OCR text content
+                cell_data_with_coords = []
+                # Match cells from structure file with OCR content texts by index
+                # Only process cells that have corresponding OCR content
+                for i, (cell_id, text) in enumerate(sorted_cells):
+                    if i < len(cells):  # Only process if we have a corresponding structure cell
+                        cell_info = cells[i]
+                        # Use the structure coordinates and the OCR text
+                        cell_data_with_coords.append({
+                            'text': text,
+                            'x_min': cell_info.get('x_min', 0),
+                            'y_min': cell_info.get('y_min', 0),
+                            'x_max': cell_info.get('x_max', 1),
+                            'y_max': cell_info.get('y_max', 1)
+                        })
 
                         # If we have cell data, try to create a proper table structure
                         if cell_data_with_coords:
@@ -2081,23 +2129,22 @@ def format_markdown_table(element, content_texts):
                             # Now sort rows by y-coordinate (top to bottom)
                             rows.sort(key=lambda r: r[0]['y_min'] if r else 0)
 
+                            # Create markdown table - only once
                             if rows:
-                                # Create markdown table
-                                if rows:
-                                    # Create header row from first row if it looks like a header
-                                    first_row = rows[0]
-                                    headers = [cell['text'].strip() if cell['text'].strip() else " " for cell in first_row]
-                                    header_row = "| " + " | ".join(headers) + " |"
-                                    separator_row = "|" + "|".join([" --- " for _ in headers]) + "|"
+                                # Create header row from first row if it looks like a header
+                                first_row = rows[0]
+                                headers = [cell['text'].strip() if cell['text'].strip() else " " for cell in first_row]
+                                header_row = "| " + " | ".join(headers) + " |"
+                                separator_row = "|" + "|".join([" --- " for _ in headers]) + "|"
 
-                                    markdown_lines.append(header_row)
-                                    markdown_lines.append(separator_row)
+                                markdown_lines.append(header_row)
+                                markdown_lines.append(separator_row)
 
-                                    # Add remaining rows
-                                    for row in rows[1:]:
-                                        row_data = [cell['text'].strip() if cell['text'].strip() else " " for cell in row]
-                                        row_str = "| " + " | ".join(row_data) + " |"
-                                        markdown_lines.append(row_str)
+                                # Add remaining rows
+                                for row in rows[1:]:
+                                    row_data = [cell['text'].strip() if cell['text'].strip() else " " for cell in row]
+                                    row_str = "| " + " | ".join(row_data) + " |"
+                                    markdown_lines.append(row_str)
                             else:
                                 # Fallback: if we cannot determine rows, just put all cells in one row
                                 all_texts = [cell['text'].strip() if cell['text'].strip() else " " for cell in cell_data_with_coords]
@@ -2248,27 +2295,33 @@ def save_document_markdown(result_obj, extract_dir=None, source_fn=None):
         
         # Process page elements
         elements = page_data.get('elements', [])
+        print(f"Got {len(elements)} elements for page {page_name}")
         if elements:
-            
             for element in elements:
                 element_type = element.get('type', 'other')
                 markdown_content.append(f"#### {element_type.title()}")
                 
                 # Add content texts if available
                 content_texts = element.get('content_texts', [])
+                print(f"Element has {len(content_texts)} content texts")
                 if content_texts:
                     if element_type == 'table':
                         # Format table content using the new utility function
+                        print(f"Adding table from page {page_name}")
                         table_lines = format_markdown_table(element, content_texts)
+                        print(table_lines)
                         for line in table_lines:
                             markdown_content.append(line)
                     elif element_type == 'chart':
                         # Format chart content using the new utility function
+                        print(f"Adding chart from page {page_name}")
                         chart_lines = format_markdown_chart(element, content_texts)
+                        print(chart_lines)
                         for line in chart_lines:
                             markdown_content.append(line)
                     else:
                         # Handle non-chart, non-table content as before
+                        print(f"Adding {element_type} from page {page_name}")
                         for content in content_texts:
                             text = content.get('text', '')
                             if text.strip():
