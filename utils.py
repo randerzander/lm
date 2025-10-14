@@ -2299,7 +2299,7 @@ def save_document_markdown(result_obj, extract_dir=None, source_fn=None):
         
         # Process page elements
         elements = page_data.get('elements', [])
-        print(f"Got {len(elements)} elements for page {page_name}")
+        #print(f"Got {len(elements)} elements for page {page_name}")
         if elements:
             for element in elements:
                 element_type = element.get('type', 'other')
@@ -2307,25 +2307,25 @@ def save_document_markdown(result_obj, extract_dir=None, source_fn=None):
                 
                 # Add content texts if available
                 content_texts = element.get('content_texts', [])
-                print(f"Element has {len(content_texts)} content texts")
+                #print(f"Element has {len(content_texts)} content texts")
                 if content_texts:
                     if element_type == 'table':
                         # Format table content using the new utility function
-                        print(f"Adding table from page {page_name}")
+                        #print(f"Adding table from page {page_name}")
                         table_lines = format_markdown_table(element, content_texts)
-                        print(table_lines)
+                        #print(table_lines)
                         for line in table_lines:
                             markdown_content.append(line)
                     elif element_type == 'chart':
                         # Format chart content using the new utility function
-                        print(f"Adding chart from page {page_name}")
+                        #print(f"Adding chart from page {page_name}")
                         chart_lines = format_markdown_chart(element, content_texts)
-                        print(chart_lines)
+                        #print(chart_lines)
                         for line in chart_lines:
                             markdown_content.append(line)
                     else:
                         # Handle non-chart, non-table content as before
-                        print(f"Adding {element_type} from page {page_name}")
+                        #print(f"Adding {element_type} from page {page_name}")
                         for content in content_texts:
                             text = content.get('text', '')
                             if text.strip():
