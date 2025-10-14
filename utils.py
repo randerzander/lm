@@ -2236,34 +2236,19 @@ def save_document_markdown(result_obj, extract_dir=None, source_fn=None):
     else:
         markdown_content.append(f"# Document\n")
     
-    markdown_content.append("## Document Overview\n")
-    markdown_content.append(f"- Total Pages: {len(result_obj.get('pages', {}))}")
-    markdown_content.append(f"- Total Elements: {result_obj.get('total_elements', 0)}")
-    
-    # Add content statistics
-    content_elements = result_obj.get('content_elements', {})
-    markdown_content.append(f"- Tables: {len(content_elements.get('tables', []))}")
-    markdown_content.append(f"- Charts: {len(content_elements.get('charts', []))}")
-    markdown_content.append(f"- Titles: {len(content_elements.get('titles', []))}")
-    markdown_content.append(f"- Other Elements: {len(content_elements.get('other', []))}\n")
-    
     # Process each page in sorted order
     pages = result_obj.get('pages', {})
     for page_name in sorted(pages.keys(), key=lambda x: int(x.split('_')[-1]) if x.split('_')[-1].isdigit() else 0):
         page_data = pages[page_name]
         
-        markdown_content.append(f"## Page {page_name.replace('page_', '')}\n")
-        
         # Add page text (from PDF extraction)
         page_text = page_data.get('page_text', '')
         if page_text.strip():
-            markdown_content.append("### Page Text\n")
             markdown_content.append(f"{page_text}\n")
         
         # Process page elements
         elements = page_data.get('elements', [])
         if elements:
-            markdown_content.append("### Page Elements\n")
             
             for element in elements:
                 element_type = element.get('type', 'other')
