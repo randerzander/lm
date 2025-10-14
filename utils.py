@@ -2094,65 +2094,69 @@ def format_markdown_table(element, content_texts):
                             'y_max': cell_info.get('y_max', 1)
                         })
 
-                        # If we have cell data, try to create a proper table structure
-                        if cell_data_with_coords:
-                            # For simplicity of this implementation, we'll sort cells by y-coordinate first
-                            # (for rows) and then by x-coordinate (for columns) to simulate table structure
-                            # This is a simplified approach - a robust implementation would use
-                            # more sophisticated algorithms to determine table grid
+                # If we have cell data, try to create a proper table structure
+                # This should be OUTSIDE the loop that builds cell_data_with_coords
+                if cell_data_with_coords:
+                    # For simplicity of this implementation, we'll sort cells by y-coordinate first
+                    # (for rows) and then by x-coordinate (for columns) to simulate table structure
+                    # This is a simplified approach - a robust implementation would use
+                    # more sophisticated algorithms to determine table grid
 
-                            # Group cells by similar y-coordinates (rows)
-                            # Use a simple approach with tolerance for y-coordinates
-                            row_tolerance = 0.05  # Adjust based on coordinate system
-                            rows = []
-                            used_cells = set()
+                    # Group cells by similar y-coordinates (rows)
+                    # Use a simple approach with tolerance for y-coordinates
+                    row_tolerance = 0.05  # Adjust based on coordinate system
+                    rows = []
+                    used_cell_indices = set()  # Track indices of cells we've already used
 
-                            for i, cell in enumerate(cell_data_with_coords):
-                                if i in used_cells:
-                                    continue
+                    # Create a list of cell data with their original indices to properly track them
+                    indexed_cell_data = [(i, cell) for i, cell in enumerate(cell_data_with_coords)]
 
-                                current_row = [cell]
-                                used_cells.add(i)
+                    for idx, cell in indexed_cell_data:
+                        if idx in used_cell_indices:
+                            continue
 
-                                # Find other cells with similar y_min (in the same row)
-                                for j, other_cell in enumerate(cell_data_with_coords):
-                                    if j in used_cells:
-                                        continue
-                                    if abs(cell['y_min'] - other_cell['y_min']) < row_tolerance:
-                                        current_row.append(other_cell)
-                                        used_cells.add(j)
+                        current_row = [cell]
+                        used_cell_indices.add(idx)
 
-                                # Sort cells in row by x-coordinate (left to right)
-                                current_row.sort(key=lambda c: c['x_min'])
-                                rows.append(current_row)
+                        # Find other cells with similar y_min (in the same row)
+                        for other_idx, other_cell in indexed_cell_data:
+                            if other_idx in used_cell_indices:
+                                continue
+                            if abs(cell['y_min'] - other_cell['y_min']) < row_tolerance:
+                                current_row.append(other_cell)
+                                used_cell_indices.add(other_idx)
 
-                            # Now sort rows by y-coordinate (top to bottom)
-                            rows.sort(key=lambda r: r[0]['y_min'] if r else 0)
+                        # Sort cells in row by x-coordinate (left to right)
+                        current_row.sort(key=lambda c: c['x_min'])
+                        rows.append(current_row)
 
-                            # Create markdown table - only once
-                            if rows:
-                                # Create header row from first row if it looks like a header
-                                first_row = rows[0]
-                                headers = [cell['text'].strip() if cell['text'].strip() else " " for cell in first_row]
-                                header_row = "| " + " | ".join(headers) + " |"
-                                separator_row = "|" + "|".join([" --- " for _ in headers]) + "|"
+                    # Now sort rows by y-coordinate (top to bottom)
+                    rows.sort(key=lambda r: r[0]['y_min'] if r else 0)
 
-                                markdown_lines.append(header_row)
-                                markdown_lines.append(separator_row)
+                    # Create markdown table - only once
+                    if rows:
+                        # Create header row from first row if it looks like a header
+                        first_row = rows[0]
+                        headers = [cell['text'].strip() if cell['text'].strip() else " " for cell in first_row]
+                        header_row = "| " + " | ".join(headers) + " |"
+                        separator_row = "|" + "|".join([" --- " for _ in headers]) + "|"
 
-                                # Add remaining rows
-                                for row in rows[1:]:
-                                    row_data = [cell['text'].strip() if cell['text'].strip() else " " for cell in row]
-                                    row_str = "| " + " | ".join(row_data) + " |"
-                                    markdown_lines.append(row_str)
-                            else:
-                                # Fallback: if we cannot determine rows, just put all cells in one row
-                                all_texts = [cell['text'].strip() if cell['text'].strip() else " " for cell in cell_data_with_coords]
-                                if all_texts:
-                                    header_row = "| " + " | ".join(all_texts) + " |"
-                                    separator_row = "|" + "|".join([" --- " for _ in all_texts]) + "|"
-                                    markdown_lines.append(header_row)
-                                    markdown_lines.append(separator_row)
+                        markdown_lines.append(header_row)
+                        markdown_lines.append(separator_row)
+
+                        # Add remaining rows
+                        for row in rows[1:]:
+                            row_data = [cell['text'].strip() if cell['text'].strip() else " " for cell in row]
+                            row_str = "| " + " | ".join(row_data) + " |"
+                            markdown_lines.append(row_str)
+                    else:
+                        # Fallback: if we cannot determine rows, just put all cells in one row
+                        all_texts = [cell['text'].strip() if cell['text'].strip() else " " for cell in cell_data_with_coords]
+                        if all_texts:
+                            header_row = "| " + " | ".join(all_texts) + " |"
+                            separator_row = "|" + "|".join([" --- " for _ in all_texts]) + "|"
+                            markdown_lines.append(header_row)
+                            markdown_lines.append(separator_row)
         else:
             # If no structure file, just display as list
             for source, text in sorted_cells:
