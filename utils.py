@@ -982,6 +982,9 @@ def process_page_images(pages_dir="pages", output_dir="page_elements", timing=Fa
                 start_time = time.time()
             # Process all table structure batches in parallel
             table_structure_batch_results = extract_table_structure_batch(temp_paths, api_key, batch_size)
+            # print(f"DEBUG: Table structure batch API returned {len(table_structure_batch_results)} batch result objects")
+            # if table_structure_batch_results:
+            #     print(f"DEBUG: First table batch result keys: {list(table_structure_batch_results[0].keys()) if isinstance(table_structure_batch_results[0], dict) else type(table_structure_batch_results[0])}")
             if timing:
                 table_structure_time += time.time() - start_time
             
@@ -991,6 +994,8 @@ def process_page_images(pages_dir="pages", output_dir="page_elements", timing=Fa
             for batch_result in table_structure_batch_results:
                 if 'data' in batch_result:
                     all_batch_table_structures.extend(batch_result['data'])
+            
+            # print(f"DEBUG: Processing {len(table_structure_tasks)} table structure tasks with {len(all_batch_table_structures)} batch results")
             
             # Process each table structure result
             for task_idx, task in enumerate(table_structure_tasks):
@@ -1002,6 +1007,7 @@ def process_page_images(pages_dir="pages", output_dir="page_elements", timing=Fa
                 if task_idx < len(all_batch_table_structures):
                     # all_batch_table_structures already contains the structure data directly from the API response
                     table_structure = all_batch_table_structures[task_idx]
+                    # print(f"DEBUG: Processing table {task_idx} from batch results. Table structure keys: {list(table_structure.keys()) if isinstance(table_structure, dict) else type(table_structure)}")
                 else:
                     # Fallback: process individually if batch results don't match
                     print(f"Batch result mismatch for {temp_path}, processing individually")
@@ -1020,38 +1026,46 @@ def process_page_images(pages_dir="pages", output_dir="page_elements", timing=Fa
                 os.makedirs(table_cells_dir, exist_ok=True)
                 
                 # Extract cell images from table structure
-                if 'data' in table_structure and table_structure['data']:
-                    for page_struct in table_structure['data']:
-                        if 'bounding_boxes' in page_struct and 'cell' in page_struct['bounding_boxes']:
-                            cells = page_struct['bounding_boxes']['cell']
+                # After batch processing, table structure has bounding_boxes directly (not under 'data' field)
+                initial_table_ocr_count = len(table_cell_ocr_tasks)
+                if 'bounding_boxes' in table_structure and 'cell' in table_structure['bounding_boxes']:
+                    cells = table_structure['bounding_boxes']['cell']
+                    total_cells_found = len(cells)
+                    # print(f"DEBUG: Found {total_cells_found} cells in table structure")
+                    
+                    # Get the dimensions of the cropped table image to convert normalized coordinates
+                    table_width, table_height = cropped_image.size
+                    
+                    for cell_idx, cell in enumerate(cells):
+                        # Calculate pixel coordinates from normalized coordinates
+                        cell_x_min = int(cell['x_min'] * table_width)
+                        cell_y_min = int(cell['y_min'] * table_height)
+                        cell_x_max = int(cell['x_max'] * table_width)
+                        cell_y_max = int(cell['y_max'] * table_height)
+                        
+                        # Ensure coordinates are within image bounds
+                        cell_x_min = max(0, cell_x_min)
+                        cell_y_min = max(0, cell_y_min)
+                        cell_x_max = min(table_width, cell_x_max)
+                        cell_y_max = min(table_height, cell_y_max)
+                        
+                        # Crop the cell from the table image
+                        if cell_x_max > cell_x_min and cell_y_max > cell_y_min:
+                            cell_image = cropped_image.crop((cell_x_min, cell_y_min, cell_x_max, cell_y_max))
                             
-                            # Get the dimensions of the cropped table image to convert normalized coordinates
-                            table_width, table_height = cropped_image.size
+                            # Create filename based on source, page number, element number, and cell number
+                            base_name = os.path.basename(image_path).replace('.jpg', '')
+                            cell_image_filename = os.path.join(table_cells_dir, f"{base_name}_cell_{cell_idx+1}.jpg")
+                            cell_image.save(cell_image_filename, "JPEG", quality=90)
                             
-                            for cell_idx, cell in enumerate(cells):
-                                # Calculate pixel coordinates from normalized coordinates
-                                cell_x_min = int(cell['x_min'] * table_width)
-                                cell_y_min = int(cell['y_min'] * table_height)
-                                cell_x_max = int(cell['x_max'] * table_width)
-                                cell_y_max = int(cell['y_max'] * table_height)
-                                
-                                # Ensure coordinates are within image bounds
-                                cell_x_min = max(0, cell_x_min)
-                                cell_y_min = max(0, cell_y_min)
-                                cell_x_max = min(table_width, cell_x_max)
-                                cell_y_max = min(table_height, cell_y_max)
-                                
-                                # Crop the cell from the table image
-                                if cell_x_max > cell_x_min and cell_y_max > cell_y_min:
-                                    cell_image = cropped_image.crop((cell_x_min, cell_y_min, cell_x_max, cell_y_max))
-                                    
-                                    # Create filename based on source, page number, element number, and cell number
-                                    base_name = os.path.basename(image_path).replace('.jpg', '')
-                                    cell_image_filename = os.path.join(table_cells_dir, f"{base_name}_cell_{cell_idx+1}.jpg")
-                                    cell_image.save(cell_image_filename, "JPEG", quality=90)
-                                    
-                                    # Add cell image to OCR tasks to process later in batches
-                                    table_cell_ocr_tasks.append(cell_image_filename)
+                            # Add cell image to OCR tasks to process later in batches
+                            table_cell_ocr_tasks.append(cell_image_filename)
+                    # print(f"DEBUG: Table {os.path.basename(image_path)} - Found {total_cells_found} total cells in structure")
+                # No 'else' needed here - just continue with logging if no cells found
+                
+                # Log how many cells were added for this table
+                added_count = len(table_cell_ocr_tasks) - initial_table_ocr_count
+                # print(f"DEBUG: Table {os.path.basename(image_path)} - Actually added {added_count} cells to OCR tasks, total table OCR tasks now: {len(table_cell_ocr_tasks)}")
                 
                 # Remove temporary image used for API call
                 if os.path.exists(temp_path):
@@ -1086,7 +1100,10 @@ def process_page_images(pages_dir="pages", output_dir="page_elements", timing=Fa
                     os.makedirs(table_cells_dir, exist_ok=True)
                     
                     # Extract cell images from table structure
+                    initial_table_ocr_count = len(table_cell_ocr_tasks)
+                    # Check both possible structures: original (with 'data' field) and direct structure
                     if 'data' in table_structure and table_structure['data']:
+                        # Original structure: results under 'data' field (for fallback individual processing)
                         for page_struct in table_structure['data']:
                             if 'bounding_boxes' in page_struct and 'cell' in page_struct['bounding_boxes']:
                                 cells = page_struct['bounding_boxes']['cell']
@@ -1118,6 +1135,41 @@ def process_page_images(pages_dir="pages", output_dir="page_elements", timing=Fa
                                         
                                         # Add cell image to OCR tasks to process later in batches
                                         table_cell_ocr_tasks.append(cell_image_filename)
+                    elif 'bounding_boxes' in table_structure and 'cell' in table_structure['bounding_boxes']:
+                        # Direct structure (for fallback individual processing with same structure as batch)
+                        cells = table_structure['bounding_boxes']['cell']
+                        
+                        # Get the dimensions of the cropped table image to convert normalized coordinates
+                        table_width, table_height = cropped_image.size
+                        
+                        for cell_idx, cell in enumerate(cells):
+                            # Calculate pixel coordinates from normalized coordinates
+                            cell_x_min = int(cell['x_min'] * table_width)
+                            cell_y_min = int(cell['y_min'] * table_height)
+                            cell_x_max = int(cell['x_max'] * table_width)
+                            cell_y_max = int(cell['y_max'] * table_height)
+                            
+                            # Ensure coordinates are within image bounds
+                            cell_x_min = max(0, cell_x_min)
+                            cell_y_min = max(0, cell_y_min)
+                            cell_x_max = min(table_width, cell_x_max)
+                            cell_y_max = min(table_height, cell_y_max)
+                            
+                            # Crop the cell from the table image
+                            if cell_x_max > cell_x_min and cell_y_max > cell_y_min:
+                                cell_image = cropped_image.crop((cell_x_min, cell_y_min, cell_x_max, cell_y_max))
+                                
+                                # Create filename based on source, page number, element number, and cell number
+                                base_name = os.path.basename(image_path).replace('.jpg', '')
+                                cell_image_filename = os.path.join(table_cells_dir, f"{base_name}_cell_{cell_idx+1}.jpg")
+                                cell_image.save(cell_image_filename, "JPEG", quality=90)
+                                
+                                # Add cell image to OCR tasks to process later in batches
+                                table_cell_ocr_tasks.append(cell_image_filename)
+                    
+                    # Log how many cells were added for this table
+                    added_count = len(table_cell_ocr_tasks) - initial_table_ocr_count
+                    # print(f"DEBUG: Table {os.path.basename(image_path)} - Added {added_count} cells to OCR tasks, total table OCR tasks now: {len(table_cell_ocr_tasks)}")
                     
                     # Remove temporary image used for API call
                     if os.path.exists(temp_path):
@@ -1137,6 +1189,9 @@ def process_page_images(pages_dir="pages", output_dir="page_elements", timing=Fa
                 start_time = time.time()
             # Process all chart graphic elements batches in parallel
             chart_graphic_elements_batch_results = extract_graphic_elements_batch(temp_paths, api_key, batch_size)
+            # print(f"DEBUG: Chart graphic elements batch API returned {len(chart_graphic_elements_batch_results)} batch result objects")
+            # if chart_graphic_elements_batch_results:
+            #     print(f"DEBUG: First batch result keys: {list(chart_graphic_elements_batch_results[0].keys()) if isinstance(chart_graphic_elements_batch_results[0], dict) else type(chart_graphic_elements_batch_results[0])}")
             if timing:
                 chart_structure_time += time.time() - start_time
             
@@ -1155,6 +1210,7 @@ def process_page_images(pages_dir="pages", output_dir="page_elements", timing=Fa
                     all_batch_chart_elements.append(batch_response)
             
             # Process each chart graphic elements result
+            # print(f"DEBUG: Processing {len(chart_graphic_elements_tasks)} chart graphic elements tasks with {len(all_batch_chart_elements)} batch results")
             for task_idx, task in enumerate(chart_graphic_elements_tasks):
                 temp_path = task['temp_path']
                 image_path = task['image_path']
@@ -1164,6 +1220,7 @@ def process_page_images(pages_dir="pages", output_dir="page_elements", timing=Fa
                 if task_idx < len(all_batch_chart_elements):
                     # all_batch_chart_elements contains the full graphic elements response for each image
                     chart_elements = all_batch_chart_elements[task_idx]
+                    # print(f"DEBUG: Processing chart {task_idx} from batch results. Chart elements keys: {list(chart_elements.keys()) if isinstance(chart_elements, dict) else type(chart_elements)}")
                 else:
                     # Fallback: process individually if batch results don't match
                     print(f"Batch result mismatch for {temp_path}, processing individually")
@@ -1182,12 +1239,10 @@ def process_page_images(pages_dir="pages", output_dir="page_elements", timing=Fa
                 os.makedirs(chart_elements_dir, exist_ok=True)
                 
                 # Extract element images from graphic elements
-                # The chart_elements response contains a 'data' field with page-level results
-                if 'data' in chart_elements and chart_elements['data']:
-                    for page_elements in chart_elements['data']:
-                        if 'bounding_boxes' in page_elements:
-                            # Process all types of graphic elements (labels, axes, etc.)
-                            for elem_type, elem_list in page_elements['bounding_boxes'].items():
+                # The chart_elements response has bounding_boxes directly (not under 'data' field)
+                if 'bounding_boxes' in chart_elements:
+                    # Process all types of graphic elements (labels, axes, etc.)
+                    for elem_type, elem_list in chart_elements['bounding_boxes'].items():
                                 if elem_list and isinstance(elem_list, list):
                                     # Get the dimensions of the cropped chart image to convert normalized coordinates
                                     chart_width, chart_height = cropped_image.size
@@ -1251,7 +1306,10 @@ def process_page_images(pages_dir="pages", output_dir="page_elements", timing=Fa
                     os.makedirs(chart_elements_dir, exist_ok=True)
                     
                     # Extract element images from graphic elements
+                    initial_chart_ocr_count = len(chart_element_ocr_tasks)
+                    # Sequential processing: check original structure first, then fallback structure
                     if 'data' in chart_elements and chart_elements['data']:
+                        # Original structure: results under 'data' field
                         for page_elements in chart_elements['data']:
                             if 'bounding_boxes' in page_elements:
                                 # Process all types of graphic elements (labels, axes, etc.)
@@ -1285,6 +1343,43 @@ def process_page_images(pages_dir="pages", output_dir="page_elements", timing=Fa
                                                     
                                                     # Add chart element image to OCR tasks to process later in batches
                                                     chart_element_ocr_tasks.append(elem_image_filename)
+                    elif 'bounding_boxes' in chart_elements:
+                        # Direct structure (for fallback individual processing)
+                        # Process all types of graphic elements (labels, axes, etc.)
+                        for elem_type, elem_list in chart_elements['bounding_boxes'].items():
+                            if elem_list and isinstance(elem_list, list):
+                                # Get the dimensions of the cropped chart image to convert normalized coordinates
+                                chart_width, chart_height = cropped_image.size
+                                
+                                for elem_idx, elem in enumerate(elem_list):
+                                    if 'x_min' in elem and 'y_min' in elem and 'x_max' in elem and 'y_max' in elem:
+                                        # Calculate pixel coordinates from normalized coordinates
+                                        elem_x_min = int(elem['x_min'] * chart_width)
+                                        elem_y_min = int(elem['y_min'] * chart_height)
+                                        elem_x_max = int(elem['x_max'] * chart_width)
+                                        elem_y_max = int(elem['y_max'] * chart_height)
+                                        
+                                        # Ensure coordinates are within image bounds
+                                        elem_x_min = max(0, elem_x_min)
+                                        elem_y_min = max(0, elem_y_min)
+                                        elem_x_max = min(chart_width, elem_x_max)
+                                        elem_y_max = min(chart_height, elem_y_max)
+                                        
+                                        # Crop the element from the chart image
+                                        if elem_x_max > elem_x_min and elem_y_max > elem_y_min:
+                                            elem_image = cropped_image.crop((elem_x_min, elem_y_min, elem_x_max, elem_y_max))
+                                            
+                                            # Create filename for the element image
+                                            base_name = os.path.basename(image_path).replace('.jpg', '')
+                                            elem_image_filename = os.path.join(chart_elements_dir, f"{base_name}_{elem_type}_{elem_idx+1}.jpg")
+                                            elem_image.save(elem_image_filename, "JPEG", quality=90)
+                                            
+                                            # Add chart element image to OCR tasks to process later in batches
+                                            chart_element_ocr_tasks.append(elem_image_filename)
+                    
+                    # Log how many elements were added for this chart
+                    added_count = len(chart_element_ocr_tasks) - initial_chart_ocr_count
+                    # print(f"DEBUG: Chart {os.path.basename(image_path)} - Added {added_count} elements to OCR tasks, total chart OCR tasks now: {len(chart_element_ocr_tasks)}")
                     
                     # Remove temporary image used for API call
                     if os.path.exists(temp_path):
@@ -1293,6 +1388,7 @@ def process_page_images(pages_dir="pages", output_dir="page_elements", timing=Fa
                     print(f"Error processing graphic elements for {temp_path}: {str(e_individual)}")
     
     # Now process all the OCR tasks in batches
+    # print(f"DEBUG: Preparing OCR tasks - Table cell tasks: {len(table_cell_ocr_tasks)}, Chart element tasks: {len(chart_element_ocr_tasks)}, Title tasks: {len(title_ocr_tasks) if ocr_titles else 0}")
     all_ocr_tasks = []
     all_ocr_tasks.extend(table_cell_ocr_tasks)
     all_ocr_tasks.extend(chart_element_ocr_tasks)
@@ -1311,26 +1407,46 @@ def process_page_images(pages_dir="pages", output_dir="page_elements", timing=Fa
                 ocr_time += time.time() - start_time
             
             # Process the OCR batch results
-            # Flatten the batch results since extract_ocr_text_batch now returns all batches together
-            all_batch_ocr_data = []
+            # OCR batch processing returns results for all images in the batch
+            batch_results_processed = 0
             for batch_result in ocr_batch_results:
-                if 'data' in batch_result:
-                    all_batch_ocr_data.extend(batch_result['data'])
-            
-            # Process each image result
-            for img_idx, img_path in enumerate(all_ocr_tasks):
-                if img_idx < len(all_batch_ocr_data):
-                    # Create individual result for this specific image
-                    ocr_result = {"data": [all_batch_ocr_data[img_idx]]}
+                if 'data' in batch_result and isinstance(batch_result['data'], list):
+                    # Process each result in this batch (each corresponds to an image in the same order)
+                    for result_idx, single_result in enumerate(batch_result['data']):
+                        # Calculate the global index in all_ocr_tasks
+                        global_idx = batch_results_processed
+                        if global_idx < len(all_ocr_tasks):
+                            img_path = all_ocr_tasks[global_idx]
+                            
+                            # Create individual result for this specific image  
+                            # The batch result for a single image should have the same structure as individual API call
+                            individual_ocr_result = {"data": [single_result]}
+                            
+                            # Save the OCR result as a JSON file
+                            ocr_filename = img_path.replace('.jpg', '_ocr.json')
+                            with open(ocr_filename, 'w') as f:
+                                json.dump(individual_ocr_result, f, indent=2)
+                            
+                            batch_results_processed += 1
+                        else:
+                            print(f"Unexpected: More results in batch than tasks. Skipping result {result_idx}")
+                            break
                 else:
-                    # Fallback: process individually if batch results don't match
-                    print(f"Batch result mismatch for {img_path}, processing individually")
-                    ocr_result = extract_ocr_text(img_path, api_key)
-                
-                # Save the OCR result as a JSON file
-                ocr_filename = img_path.replace('.jpg', '_ocr.json')
-                with open(ocr_filename, 'w') as f:
-                    json.dump(ocr_result, f, indent=2)
+                    print(f"OCR batch result missing 'data' field or not a list: {batch_result}")
+            
+            # Check if any tasks were not processed due to mismatched results
+            if batch_results_processed < len(all_ocr_tasks):
+                print(f"OCR batch processing mismatch: processed {batch_results_processed} of {len(all_ocr_tasks)} tasks. Fallback to individual processing for remaining...")
+                # Process remaining items individually
+                for remaining_idx in range(batch_results_processed, len(all_ocr_tasks)):
+                    img_path = all_ocr_tasks[remaining_idx]
+                    try:
+                        ocr_result = extract_ocr_text(img_path, api_key)
+                        ocr_filename = img_path.replace('.jpg', '_ocr.json')
+                        with open(ocr_filename, 'w') as f:
+                            json.dump(ocr_result, f, indent=2)
+                    except Exception as e:
+                        print(f"Error processing OCR for {img_path} individually: {str(e)}")
         except Exception as e:
             print(f"Error processing OCR batches in parallel: {str(e)}")
             print("Falling back to sequential processing...")
