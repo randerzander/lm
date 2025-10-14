@@ -1141,17 +1141,18 @@ def process_page_images(pages_dir="pages", output_dir="page_elements", timing=Fa
                 chart_structure_time += time.time() - start_time
             
             # Process the chart graphic elements batch results
-            # Each batch result contains 'data' field with responses for all images in that batch
+            # chart_graphic_elements_batch_results is a list of batch responses
+            # Each batch response contains 'data' field with results for all images in that batch
             all_batch_chart_elements = []
-            for batch_result in chart_graphic_elements_batch_results:
-                # Each batch_result is the API response for one batch of images
-                # It should have a 'data' field containing a list of results for each image
-                if isinstance(batch_result, dict) and 'data' in batch_result and isinstance(batch_result['data'], list):
-                    # Add each individual result from this batch to our collection
-                    all_batch_chart_elements.extend(batch_result['data'])
+            for batch_response in chart_graphic_elements_batch_results:
+                # Each batch_response is the API response for one batch call (containing multiple images)
+                # It should have a 'data' field containing a list of individual results for each image in the batch
+                if isinstance(batch_response, dict) and 'data' in batch_response and isinstance(batch_response['data'], list):
+                    # Add each individual result from this batch response 
+                    all_batch_chart_elements.extend(batch_response['data'])
                 else:
-                    # If the result doesn't have expected structure, add as single result
-                    all_batch_chart_elements.append(batch_result)
+                    # If the response doesn't have expected structure, add as single result
+                    all_batch_chart_elements.append(batch_response)
             
             # Process each chart graphic elements result
             for task_idx, task in enumerate(chart_graphic_elements_tasks):
@@ -1181,6 +1182,7 @@ def process_page_images(pages_dir="pages", output_dir="page_elements", timing=Fa
                 os.makedirs(chart_elements_dir, exist_ok=True)
                 
                 # Extract element images from graphic elements
+                # The chart_elements response contains a 'data' field with page-level results
                 if 'data' in chart_elements and chart_elements['data']:
                     for page_elements in chart_elements['data']:
                         if 'bounding_boxes' in page_elements:
