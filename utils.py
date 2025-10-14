@@ -654,7 +654,12 @@ def extract_graphic_elements_batch(image_paths, api_key=None, batch_size=5):
         "graphic elements"
     )
 
-def process_page_images(pages_dir="pages", output_dir="page_elements", timing=False, ocr_titles=True, batch_processing=True, batch_size=20, pdf_extraction_time=0):
+def process_page_images(pages_dir="pages", output_dir="page_elements", timing=False, ocr_titles=True, batch_processing=True, batch_size=20, pdf_extraction_time=0, print_timing_summary=True):
+    # Track all timing values to return when needed
+    page_elements_time = 0
+    table_structure_time = 0
+    chart_structure_time = 0
+    ocr_time = 0
     """
     Process all page images in the specified directory, extract content elements,
     and save them in subdirectories organized by content type in JSONL format.
@@ -1467,7 +1472,7 @@ def process_page_images(pages_dir="pages", output_dir="page_elements", timing=Fa
                     print(f"Error performing OCR on {img_path}: {str(e_individual)}")
 
     # Report timing if requested
-    if timing:
+    if timing and print_timing_summary:
         total_time = pdf_extraction_time + page_elements_time + table_structure_time + chart_structure_time + ocr_time
         print(f"Timing Summary:")
         print(f"  PDF Extraction: {pdf_extraction_time:.2f}s")
@@ -1476,6 +1481,18 @@ def process_page_images(pages_dir="pages", output_dir="page_elements", timing=Fa
         print(f"  Chart Structure: {chart_structure_time:.2f}s")
         print(f"  OCR: {ocr_time:.2f}s")
         print(f"  Total: {total_time:.2f}s")
+
+    # Return timing data if requested (even if not printed)
+    if timing:
+        return {
+            'pdf_extraction_time': pdf_extraction_time,
+            'page_elements_time': page_elements_time,
+            'table_structure_time': table_structure_time,
+            'chart_structure_time': chart_structure_time,
+            'ocr_time': ocr_time,
+            'ai_processing_time': page_elements_time + table_structure_time + chart_structure_time + ocr_time
+        }
+    return None
 
 
 def get_content_counts_with_text_stats(output_dir="page_elements"):

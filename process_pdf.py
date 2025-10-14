@@ -334,9 +334,15 @@ def extract(pdf_path="data/multimodal_test.pdf", output_dir="page_elements", ext
     
     # Step 2: Process page images to extract content elements with structure and OCR
     import utils
-    ai_start_time = time.time()
-    utils.process_page_images(pages_dir=pages_dir, output_dir=elements_dir, timing=timing, ocr_titles=ocr_titles, batch_processing=True, batch_size=20, pdf_extraction_time=pdf_extraction_time)
-    ai_processing_time = time.time() - ai_start_time
+    timing_data = utils.process_page_images(pages_dir=pages_dir, output_dir=elements_dir, timing=timing, ocr_titles=ocr_titles, batch_processing=True, batch_size=20, pdf_extraction_time=pdf_extraction_time, print_timing_summary=False)
+    if timing_data:
+        page_elements_time = timing_data['page_elements_time']
+        table_structure_time = timing_data['table_structure_time']
+        chart_structure_time = timing_data['chart_structure_time']
+        ocr_time = timing_data['ocr_time']
+        ai_processing_time = timing_data['ai_processing_time']
+    else:
+        ai_processing_time = 0  # Fallback if timing disabled
     
     # Step 3: Create consolidated result object
     result = get_all_extracted_content(pages_dir=pages_dir, output_dir=elements_dir)
@@ -360,13 +366,30 @@ def extract(pdf_path="data/multimodal_test.pdf", output_dir="page_elements", ext
                 # Save embeddings to LanceDB for queryable storage
                 _, lancedb_time = utils.save_to_lancedb(embedding_results, extract_dir=extract_dir, source_fn=source_fn)
     
-    # Report overall timing if requested
+    # Generate final comprehensive timing summary at the end
     if timing:
-        total_time = time.time() - start_time
-        print(f"Overall processing completed in {total_time:.2f} seconds")
-        print(f"  PDF Extraction: {pdf_extraction_time:.2f}s")
-        print(f"  Embedding Generation: {embeddings_time:.2f}s")
-        print(f"  LanceDB Indexing: {lancedb_time:.2f}s")
+        # Calculate detailed times by calling process_page_images again just to get timing info, with print disabled
+        # Actually, let's just call it once with timing and capture detailed results
+        # Since the detailed timing is already calculated in process_page_images but suppressed, 
+        # I need to run process_page_images one more time or pass timing data differently
+        # Better approach: modify process_page_images to return timing data when print_timing_summary=False
+        
+        # Generate final comprehensive timing summary at the end
+        if timing and 'timing_data' in locals() and timing_data:
+            total_time = time.time() - start_time
+            print(f"Timing Summary:")
+            print(f"  PDF Extraction: {pdf_extraction_time:.2f}s")
+            print(f"  Page Elements Inference: {page_elements_time:.2f}s")
+            print(f"  Table Structure: {table_structure_time:.2f}s")
+            print(f"  Chart Structure: {chart_structure_time:.2f}s")
+            print(f"  OCR: {ocr_time:.2f}s")
+            print(f"  Embedding Generation: {embeddings_time:.2f}s")
+            print(f"  LanceDB Indexing: {lancedb_time:.2f}s")
+            print(f"  Total: {total_time:.2f}s")
+        elif timing:
+            # Fallback for when timing is disabled
+            total_time = time.time() - start_time
+            print(f"Overall processing completed in {total_time:.2f} seconds")
     
     return result
 
