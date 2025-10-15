@@ -15,22 +15,50 @@ _api_rate_limit_semaphore = Semaphore(10)  # Default rate limit: 10 concurrent r
 _api_request_timestamps = deque()  # Track request timestamps for rate monitoring
 _api_rate_limit_lock = Lock()  # Protect access to timestamp tracking
 _api_max_concurrent_requests = 10  # Configurable maximum concurrent requests
+_api_requests_per_minute = 40  # Default: 40 requests per minute
+_api_max_workers = None  # Default to system CPU count for thread pools
 
-def configure_api_rate_limit(max_concurrent_requests=10):
+def configure_api_rate_limit(max_concurrent_requests=10, requests_per_minute=40, max_workers=None):
     """
-    Configure the maximum number of concurrent API requests.
+    Configure the API rate limiting parameters.
     
     Args:
         max_concurrent_requests (int): Maximum number of concurrent API requests allowed (default: 10)
+        requests_per_minute (int): Maximum number of requests allowed per minute (default: 40)
+        max_workers (int, optional): Maximum number of workers for thread pools (default: None, uses system CPU count)
     """
-    global _api_rate_limit_semaphore, _api_max_concurrent_requests
+    global _api_rate_limit_semaphore, _api_max_concurrent_requests, _api_requests_per_minute, _api_max_workers
     
     with _api_rate_limit_lock:
         _api_max_concurrent_requests = max_concurrent_requests
+        _api_requests_per_minute = requests_per_minute
+        _api_max_workers = max_workers
         # Create a new semaphore with the updated limit
         _api_rate_limit_semaphore = Semaphore(max_concurrent_requests)
         
-    print(f"API rate limit configured: {max_concurrent_requests} concurrent requests maximum")
+    print(f"API rate limit configured: {max_concurrent_requests} concurrent requests maximum, {requests_per_minute} requests per minute maximum")
+    if max_workers:
+        print(f"Thread pool max workers configured: {max_workers}")
+
+def _enforce_rate_limit():
+    """
+    Enforce rate limiting based on time window to prevent exceeding requests per minute.
+    """
+    current_time = time.time()
+    
+    with _api_rate_limit_lock:
+        # Remove timestamps older than 60 seconds
+        while _api_request_timestamps and (current_time - _api_request_timestamps[0]) > 60:
+            _api_request_timestamps.popleft()
+        
+        # If we've reached the limit, wait until we can make another request
+        if len(_api_request_timestamps) >= _api_requests_per_minute:
+            # Calculate how long to wait until the oldest request is outside the window
+            oldest_time = _api_request_timestamps[0]
+            wait_time = 60 - (current_time - oldest_time) + 0.1  # Add small buffer
+            return wait_time
+    
+    return 0  # No waiting needed
 
 # Global rate limiter for API requests to prevent exceeding rate limits
 api_request_lock = _api_rate_limit_semaphore
@@ -55,6 +83,10 @@ def _make_batch_request(items, api_endpoint, headers, batch_size, payload_proces
     """
     results = []
     
+    # Use configured max_workers if not provided
+    if max_workers is None:
+        max_workers = _api_max_workers
+    
     # Create all batches first
     all_batches = []
     for i in range(0, len(items), batch_size):
@@ -74,8 +106,17 @@ def _make_batch_request(items, api_endpoint, headers, batch_size, payload_proces
             payload = payload_processor(batch_items)
             
             try:
-                # Use rate limiter to prevent exceeding API rate limits (default: 10 concurrent requests)
+                # Use rate limiter to prevent exceeding API rate limits (concurrent + time-based)
                 with api_request_lock:
+                    # Enforce time-based rate limiting
+                    wait_time = _enforce_rate_limit()
+                    if wait_time > 0:
+                        time.sleep(wait_time)
+                    
+                    # Record request timestamp
+                    with _api_rate_limit_lock:
+                        _api_request_timestamps.append(time.time())
+                    
                     response = requests.post(api_endpoint, headers=headers, json=payload)
                 
                 if response.status_code == 200:
@@ -124,8 +165,17 @@ def _make_batch_request(items, api_endpoint, headers, batch_size, payload_proces
             payload = payload_processor(batch_items)
             
             try:
-                # Use rate limiter to prevent exceeding API rate limits (default: 10 concurrent requests)
+                # Use rate limiter to prevent exceeding API rate limits (concurrent + time-based)
                 with api_request_lock:
+                    # Enforce time-based rate limiting
+                    wait_time = _enforce_rate_limit()
+                    if wait_time > 0:
+                        time.sleep(wait_time)
+                    
+                    # Record request timestamp
+                    with _api_rate_limit_lock:
+                        _api_request_timestamps.append(time.time())
+                    
                     response = requests.post(api_endpoint, headers=headers, json=payload)
                 
                 if response.status_code == 200:
@@ -215,6 +265,17 @@ def _make_embedding_batch_request(items, client, batch_size, api_description="em
         batch_contents = [item[1] for item in batch_items]  # item[1] is the content
         
         try:
+            # Use rate limiter to prevent exceeding API rate limits (concurrent + time-based)
+            with api_request_lock:
+                # Enforce time-based rate limiting
+                wait_time = _enforce_rate_limit()
+                if wait_time > 0:
+                    time.sleep(wait_time)
+                
+                # Record request timestamp
+                with _api_rate_limit_lock:
+                    _api_request_timestamps.append(time.time())
+            
             # Generate embeddings for the batch
             response = client.embeddings.create(
                 input=batch_contents,
@@ -238,6 +299,17 @@ def _make_embedding_batch_request(items, client, batch_size, api_description="em
             # Fallback: process individually if batch fails
             for page_idx, content in batch_items:
                 try:
+                    # Use rate limiter to prevent exceeding API rate limits (concurrent + time-based)
+                    with api_request_lock:
+                        # Enforce time-based rate limiting
+                        wait_time = _enforce_rate_limit()
+                        if wait_time > 0:
+                            time.sleep(wait_time)
+                        
+                        # Record request timestamp
+                        with _api_rate_limit_lock:
+                            _api_request_timestamps.append(time.time())
+                    
                     response = client.embeddings.create(
                         input=[content],
                         model="nvidia/llama-3.2-nemoretriever-1b-vlm-embed-v1",
@@ -307,7 +379,18 @@ def extract_bounding_boxes(image_path, api_key=None):
     }
 
     # print(f"Processing individual page element inference for: {image_path}")  # Commented out to reduce noise
-    response = requests.post(invoke_url, headers=headers, json=payload)
+    # Use rate limiter to prevent exceeding API rate limits (concurrent + time-based)
+    with api_request_lock:
+        # Enforce time-based rate limiting
+        wait_time = _enforce_rate_limit()
+        if wait_time > 0:
+            time.sleep(wait_time)
+        
+        # Record request timestamp
+        with _api_rate_limit_lock:
+            _api_request_timestamps.append(time.time())
+        
+        response = requests.post(invoke_url, headers=headers, json=payload)
     
     if response.status_code == 200:
         return response.json()
@@ -419,7 +502,18 @@ def extract_table_structure(image_path, api_key=None):
     }
 
     # print(f"Processing individual table structure inference for: {image_path}")  # Commented out to reduce noise
-    response = requests.post(invoke_url, headers=headers, json=payload)
+    # Use rate limiter to prevent exceeding API rate limits (concurrent + time-based)
+    with api_request_lock:
+        # Enforce time-based rate limiting
+        wait_time = _enforce_rate_limit()
+        if wait_time > 0:
+            time.sleep(wait_time)
+        
+        # Record request timestamp
+        with _api_rate_limit_lock:
+            _api_request_timestamps.append(time.time())
+        
+        response = requests.post(invoke_url, headers=headers, json=payload)
     
     if response.status_code == 200:
         return response.json()
@@ -534,7 +628,18 @@ def extract_ocr_text(image_path, api_key=None):
     }
 
     # print(f"Processing individual OCR inference for: {image_path}")  # Commented out to reduce noise
-    response = requests.post(invoke_url, headers=headers, json=payload)
+    # Use rate limiter to prevent exceeding API rate limits (concurrent + time-based)
+    with api_request_lock:
+        # Enforce time-based rate limiting
+        wait_time = _enforce_rate_limit()
+        if wait_time > 0:
+            time.sleep(wait_time)
+        
+        # Record request timestamp
+        with _api_rate_limit_lock:
+            _api_request_timestamps.append(time.time())
+        
+        response = requests.post(invoke_url, headers=headers, json=payload)
     
     if response.status_code == 200:
         return response.json()
@@ -653,7 +758,18 @@ def extract_graphic_elements(image_path, api_key=None):
     }
 
     # print(f"Processing individual graphic elements inference for: {image_path}")  # Commented out to reduce noise
-    response = requests.post(invoke_url, headers=headers, json=payload)
+    # Use rate limiter to prevent exceeding API rate limits (concurrent + time-based)
+    with api_request_lock:
+        # Enforce time-based rate limiting
+        wait_time = _enforce_rate_limit()
+        if wait_time > 0:
+            time.sleep(wait_time)
+        
+        # Record request timestamp
+        with _api_rate_limit_lock:
+            _api_request_timestamps.append(time.time())
+        
+        response = requests.post(invoke_url, headers=headers, json=payload)
     
     if response.status_code == 200:
         return response.json()

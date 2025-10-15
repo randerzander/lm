@@ -289,7 +289,7 @@ def process_pdf(pdf_path):
     return pdf_extraction_time
 
 
-def extract(pdf_path="data/multimodal_test.pdf", output_dir="page_elements", extract_dir=None, timing=False, ocr_titles=True, pages_per_process=1, max_processes=None, max_concurrent_requests=10):
+def extract(pdf_path="data/multimodal_test.pdf", output_dir="page_elements", extract_dir=None, timing=False, ocr_titles=True, pages_per_process=1, max_processes=None, max_concurrent_requests=10, requests_per_minute=40, max_workers=None):
     """
     Complete extraction function that processes a PDF and returns a consolidated result object
     containing all extracted content with texts, filepaths to related images on disk, and bounding boxes.
@@ -303,6 +303,8 @@ def extract(pdf_path="data/multimodal_test.pdf", output_dir="page_elements", ext
         pages_per_process (int): Number of pages to process in each process (default: 1)
         max_processes (int): Maximum number of processes to use (default: None, which uses system CPU count)
         max_concurrent_requests (int): Maximum number of concurrent API requests allowed (default: 10)
+        requests_per_minute (int): Maximum number of requests allowed per minute (default: 40)
+        max_workers (int, optional): Maximum number of workers for thread pools (default: None, uses system CPU count)
         
     Returns:
         dict: A consolidated result object containing all extracted content
@@ -336,7 +338,7 @@ def extract(pdf_path="data/multimodal_test.pdf", output_dir="page_elements", ext
     # Step 2: Process page images to extract content elements with structure and OCR
     import utils
     # Configure API rate limiting
-    utils.configure_api_rate_limit(max_concurrent_requests)
+    utils.configure_api_rate_limit(max_concurrent_requests, requests_per_minute, max_workers)
     timing_data = utils.process_page_images(pages_dir=pages_dir, output_dir=elements_dir, timing=timing, ocr_titles=ocr_titles, batch_processing=True, batch_size=25, pdf_extraction_time=pdf_extraction_time, print_timing_summary=False)
     if timing_data:
         page_elements_time = timing_data['page_elements_time']
@@ -615,6 +617,9 @@ if __name__ == "__main__":
     target_path = "data/multimodal_test.pdf"  # Default single PDF
     pages_per_process = 1
     max_processes = multiprocessing.cpu_count()  # Default to all available CPUs
+    max_concurrent_requests = 10  # Default: 10 concurrent requests
+    requests_per_minute = 40  # Default: 40 requests per minute
+    max_workers = None  # Default: system CPU count
     
     # Check command line arguments
     if len(sys.argv) > 1:
@@ -631,30 +636,116 @@ if __name__ == "__main__":
                     if len(sys.argv) > 3:
                         try:
                             max_processes = int(sys.argv[3])
+                            if len(sys.argv) > 4:
+                                try:
+                                    max_concurrent_requests = int(sys.argv[4])
+                                    if len(sys.argv) > 5:
+                                        try:
+                                            requests_per_minute = int(sys.argv[5])
+                                            if len(sys.argv) > 6:
+                                                try:
+                                                    max_workers = int(sys.argv[6])
+                                                except ValueError:
+                                                    print(f"Invalid value for max_workers: {sys.argv[6]}. Using default value.")
+                                        except ValueError:
+                                            print(f"Invalid value for requests_per_minute: {sys.argv[5]}. Using default value.")
+                                except ValueError:
+                                    print(f"Invalid value for max_concurrent_requests: {sys.argv[4]}. Using default value.")
                         except ValueError:
                             print(f"Invalid value for max_processes: {sys.argv[3]}. Using default value.")
                 except ValueError:
                     print(f"Invalid value for pages_per_process: {sys.argv[2]}. Using default value of 1.")
         else:
-            # It could be pages_per_process or max_processes
+            # It could be pages_per_process, max_processes, max_concurrent_requests, or requests_per_minute
             try:
                 first_num = int(arg1)
                 
-                # Second argument could be pages_per_process, max_processes, or path
+                # Second argument could be any of the numeric parameters
                 if len(sys.argv) > 2:
                     try:
                         second_num = int(sys.argv[2])
-                        # Both are numbers: first is pages_per_process, second is max_processes
-                        pages_per_process = first_num
-                        max_processes = second_num
                         
-                        # Third argument could be directory or PDF path
+                        # Third argument could be another numeric parameter or path
                         if len(sys.argv) > 3:
-                            arg3 = sys.argv[3]
-                            if isdir(arg3):
-                                target_path = arg3
-                            elif arg3.endswith('.pdf') and ('/' in arg3 or '\\' in arg3):
-                                target_path = arg3
+                            try:
+                                third_num = int(sys.argv[3])
+                                
+                                # Fourth argument could be yet another numeric parameter or path
+                                if len(sys.argv) > 4:
+                                    try:
+                                        fourth_num = int(sys.argv[4])
+                                        
+                                        # Fifth argument could be the final numeric parameter or path
+                                        if len(sys.argv) > 5:
+                                            try:
+                                                fifth_num = int(sys.argv[5])
+                                                # All 5 numeric values provided, sixth might be path
+                                                pages_per_process = first_num
+                                                max_processes = second_num
+                                                max_concurrent_requests = third_num
+                                                requests_per_minute = fourth_num
+                                                max_workers = fifth_num
+                                                
+                                                if len(sys.argv) > 6:
+                                                    arg6 = sys.argv[6]
+                                                    if isdir(arg6):
+                                                        target_path = arg6
+                                                    elif arg6.endswith('.pdf') and ('/' in arg6 or '\\' in arg6):
+                                                        target_path = arg6
+                                            except ValueError:
+                                                # Fifth is not a number, so it's a path
+                                                pages_per_process = first_num
+                                                max_processes = second_num
+                                                max_concurrent_requests = third_num
+                                                requests_per_minute = fourth_num
+                                                arg5 = sys.argv[5]
+                                                if isdir(arg5):
+                                                    target_path = arg5
+                                                elif arg5.endswith('.pdf') and ('/' in arg5 or '\\' in arg5):
+                                                    target_path = arg5
+                                                else:
+                                                    print(f"Invalid path: {arg5}. Expected directory or PDF file path.")
+                                                    sys.exit(1)
+                                        else:
+                                            # Only 4 numeric values provided
+                                            pages_per_process = first_num
+                                            max_processes = second_num
+                                            max_concurrent_requests = third_num
+                                            requests_per_minute = fourth_num
+                                    except ValueError:
+                                        # Fourth is not a number, so it's a path
+                                        pages_per_process = first_num
+                                        max_processes = second_num
+                                        max_concurrent_requests = third_num
+                                        arg4 = sys.argv[4]
+                                        if isdir(arg4):
+                                            target_path = arg4
+                                        elif arg4.endswith('.pdf') and ('/' in arg4 or '\\' in arg4):
+                                            target_path = arg4
+                                        else:
+                                            print(f"Invalid path: {arg4}. Expected directory or PDF file path.")
+                                            sys.exit(1)
+                                else:
+                                    # Only 3 numeric values provided
+                                    pages_per_process = first_num
+                                    max_processes = second_num
+                                    max_concurrent_requests = third_num
+                            except ValueError:
+                                # Third is not a number, so it's a path
+                                pages_per_process = first_num
+                                max_processes = second_num
+                                arg3 = sys.argv[3]
+                                if isdir(arg3):
+                                    target_path = arg3
+                                elif arg3.endswith('.pdf') and ('/' in arg3 or '\\' in arg3):
+                                    target_path = arg3
+                                else:
+                                    print(f"Invalid path: {arg3}. Expected directory or PDF file path.")
+                                    sys.exit(1)
+                        else:
+                            # Only 2 numeric values provided
+                            pages_per_process = first_num
+                            max_processes = second_num
                     except ValueError:
                         # Second argument is not a number, so first is pages_per_process
                         pages_per_process = first_num
@@ -754,6 +845,9 @@ if __name__ == "__main__":
             
             print(f"\nAI processing {i+1}/{len(extraction_results)}: {pdf_file}")
             
+            # Configure API rate limiting before processing
+            utils.configure_api_rate_limit(max_concurrent_requests, requests_per_minute, max_workers)
+            
             # Process page images to extract content elements with structure and OCR
             ai_start_time = time.time()
             utils.process_page_images(
@@ -840,7 +934,7 @@ if __name__ == "__main__":
         
         # Example usage - single PDF file
         # When no extract_dir is specified, the extract function will use the default "extracts/{source_fn}" structure
-        result = extract(pdf_path=target_path, timing=True, pages_per_process=pages_per_process, max_processes=max_processes)
+        result = extract(pdf_path=target_path, timing=True, pages_per_process=pages_per_process, max_processes=max_processes, max_concurrent_requests=max_concurrent_requests, requests_per_minute=requests_per_minute, max_workers=max_workers)
         
         # The output will automatically be in the "extracts/{source_fn}" directory
         source_fn = os.path.splitext(os.path.basename(target_path))[0]
