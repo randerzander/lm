@@ -289,7 +289,7 @@ def process_pdf(pdf_path):
     return pdf_extraction_time
 
 
-def extract(pdf_path="data/multimodal_test.pdf", output_dir="page_elements", extract_dir=None, timing=False, ocr_titles=True, pages_per_process=1, max_processes=None):
+def extract(pdf_path="data/multimodal_test.pdf", output_dir="page_elements", extract_dir=None, timing=False, ocr_titles=True, pages_per_process=1, max_processes=None, max_concurrent_requests=10):
     """
     Complete extraction function that processes a PDF and returns a consolidated result object
     containing all extracted content with texts, filepaths to related images on disk, and bounding boxes.
@@ -302,6 +302,7 @@ def extract(pdf_path="data/multimodal_test.pdf", output_dir="page_elements", ext
         ocr_titles (bool): Whether to perform OCR on title elements, defaults to True
         pages_per_process (int): Number of pages to process in each process (default: 1)
         max_processes (int): Maximum number of processes to use (default: None, which uses system CPU count)
+        max_concurrent_requests (int): Maximum number of concurrent API requests allowed (default: 10)
         
     Returns:
         dict: A consolidated result object containing all extracted content
@@ -334,6 +335,8 @@ def extract(pdf_path="data/multimodal_test.pdf", output_dir="page_elements", ext
     
     # Step 2: Process page images to extract content elements with structure and OCR
     import utils
+    # Configure API rate limiting
+    utils.configure_api_rate_limit(max_concurrent_requests)
     timing_data = utils.process_page_images(pages_dir=pages_dir, output_dir=elements_dir, timing=timing, ocr_titles=ocr_titles, batch_processing=True, batch_size=25, pdf_extraction_time=pdf_extraction_time, print_timing_summary=False)
     if timing_data:
         page_elements_time = timing_data['page_elements_time']

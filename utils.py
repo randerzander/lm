@@ -6,14 +6,38 @@ import base64
 from glob import glob
 from PIL import Image
 import concurrent.futures
-from threading import Lock
+from threading import Lock, Semaphore
+import threading
+from collections import deque
 
-# Global lock for API requests to prevent overwhelming the server
-api_request_lock = Lock()
+# Global rate limiter for API requests to prevent exceeding rate limits (default: 10 concurrent requests)
+_api_rate_limit_semaphore = Semaphore(10)  # Default rate limit: 10 concurrent requests
+_api_request_timestamps = deque()  # Track request timestamps for rate monitoring
+_api_rate_limit_lock = Lock()  # Protect access to timestamp tracking
+_api_max_concurrent_requests = 10  # Configurable maximum concurrent requests
+
+def configure_api_rate_limit(max_concurrent_requests=10):
+    """
+    Configure the maximum number of concurrent API requests.
+    
+    Args:
+        max_concurrent_requests (int): Maximum number of concurrent API requests allowed (default: 10)
+    """
+    global _api_rate_limit_semaphore, _api_max_concurrent_requests
+    
+    with _api_rate_limit_lock:
+        _api_max_concurrent_requests = max_concurrent_requests
+        # Create a new semaphore with the updated limit
+        _api_rate_limit_semaphore = Semaphore(max_concurrent_requests)
+        
+    print(f"API rate limit configured: {max_concurrent_requests} concurrent requests maximum")
+
+# Global rate limiter for API requests to prevent exceeding rate limits
+api_request_lock = _api_rate_limit_semaphore
 
 def _make_batch_request(items, api_endpoint, headers, batch_size, payload_processor, result_processor, api_description="batch", max_workers=None, parallel=False):
     """
-    Generic function for making batch requests to an API.
+    Generic function for making batch requests to an API with rate limiting.
     
     Args:
         items: List of items to process in batches
@@ -50,7 +74,7 @@ def _make_batch_request(items, api_endpoint, headers, batch_size, payload_proces
             payload = payload_processor(batch_items)
             
             try:
-                # Use lock to prevent too many concurrent requests to the API
+                # Use rate limiter to prevent exceeding API rate limits (default: 10 concurrent requests)
                 with api_request_lock:
                     response = requests.post(api_endpoint, headers=headers, json=payload)
                 
@@ -100,7 +124,7 @@ def _make_batch_request(items, api_endpoint, headers, batch_size, payload_proces
             payload = payload_processor(batch_items)
             
             try:
-                # Use lock to prevent too many concurrent requests to the API
+                # Use rate limiter to prevent exceeding API rate limits (default: 10 concurrent requests)
                 with api_request_lock:
                     response = requests.post(api_endpoint, headers=headers, json=payload)
                 
@@ -118,6 +142,53 @@ def _make_batch_request(items, api_endpoint, headers, batch_size, payload_proces
                 raise
     
     return results
+
+
+def calculate_smart_batch_size(file_paths, max_batch_size=25, max_total_payload_size=2_000_000):
+    """
+    Calculate an appropriate batch size based on both element count and total payload size.
+    
+    Args:
+        file_paths (list): List of file paths to process
+        max_batch_size (int): Maximum number of elements per batch (default: 25)
+        max_total_payload_size (int): Maximum total payload size in bytes (default: 2MB)
+        
+    Returns:
+        int: Smart batch size that respects both limits
+    """
+    import os
+    
+    if not file_paths:
+        return max_batch_size
+    
+    # Estimate payload size by sampling first few files
+    sample_size = min(5, len(file_paths))
+    total_sample_size = 0
+    
+    for i in range(sample_size):
+        try:
+            file_size = os.path.getsize(file_paths[i])
+            # Rough estimate: base64 encoding increases size by ~33%, plus JSON overhead
+            estimated_encoded_size = int(file_size * 1.4)
+            total_sample_size += estimated_encoded_size
+        except OSError:
+            # If file doesn't exist or can't be accessed, use a conservative estimate
+            total_sample_size += 100_000  # 100KB estimate
+    
+    # Calculate average size per file based on samples
+    avg_file_size = total_sample_size // sample_size if sample_size > 0 else 150_000
+    
+    # Calculate batch size based on payload size limit
+    max_batch_by_size = max_total_payload_size // avg_file_size
+    max_batch_by_size = max(1, max_batch_by_size)  # Ensure at least 1
+    
+    # Return the most restrictive limit
+    smart_batch_size = min(max_batch_size, max_batch_by_size)
+    
+    print(f"Smart batch sizing: {len(file_paths)} files, avg size ~{avg_file_size//1000}KB, "
+          f"batch size: {smart_batch_size} (was {max_batch_size})")
+    
+    return smart_batch_size
 
 
 def _make_embedding_batch_request(items, client, batch_size, api_description="embedding"):
@@ -708,7 +779,9 @@ def process_page_images(pages_dir="pages", output_dir="page_elements", timing=Fa
             if timing:
                 start_time = time.time()
             try:
-                batch_results = extract_bounding_boxes_batch(batch_paths, api_key, batch_size)
+                # Use smart batching that considers both element count and total payload size
+                smart_batch_size = calculate_smart_batch_size(batch_paths, max_batch_size=batch_size, max_total_payload_size=2_000_000)  # 2MB limit
+                batch_results = extract_bounding_boxes_batch(batch_paths, api_key, smart_batch_size)
                 
                 if timing:
                     page_elements_time += time.time() - start_time
@@ -1007,8 +1080,9 @@ def process_page_images(pages_dir="pages", output_dir="page_elements", timing=Fa
         try:
             if timing:
                 start_time = time.time()
-            # Process all table structure batches in parallel
-            table_structure_batch_results = extract_table_structure_batch(temp_paths, api_key, batch_size)
+            # Process all table structure batches in parallel with smart sizing
+            smart_batch_size = calculate_smart_batch_size(temp_paths, max_batch_size=batch_size, max_total_payload_size=2_000_000)  # 2MB limit
+            table_structure_batch_results = extract_table_structure_batch(temp_paths, api_key, smart_batch_size)
             # print(f"DEBUG: Table structure batch API returned {len(table_structure_batch_results)} batch result objects")
             # if table_structure_batch_results:
             #     print(f"DEBUG: First table batch result keys: {list(table_structure_batch_results[0].keys()) if isinstance(table_structure_batch_results[0], dict) else type(table_structure_batch_results[0])}")
@@ -1214,8 +1288,9 @@ def process_page_images(pages_dir="pages", output_dir="page_elements", timing=Fa
         try:
             if timing:
                 start_time = time.time()
-            # Process all chart graphic elements batches in parallel
-            chart_graphic_elements_batch_results = extract_graphic_elements_batch(temp_paths, api_key, batch_size)
+            # Process all chart graphic elements batches in parallel with smart sizing
+            smart_batch_size = calculate_smart_batch_size(temp_paths, max_batch_size=batch_size, max_total_payload_size=2_000_000)  # 2MB limit
+            chart_graphic_elements_batch_results = extract_graphic_elements_batch(temp_paths, api_key, smart_batch_size)
             # print(f"DEBUG: Chart graphic elements batch API returned {len(chart_graphic_elements_batch_results)} batch result objects")
             # if chart_graphic_elements_batch_results:
             #     print(f"DEBUG: First batch result keys: {list(chart_graphic_elements_batch_results[0].keys()) if isinstance(chart_graphic_elements_batch_results[0], dict) else type(chart_graphic_elements_batch_results[0])}")
@@ -1427,14 +1502,16 @@ def process_page_images(pages_dir="pages", output_dir="page_elements", timing=Fa
     if ocr_titles:
         all_ocr_tasks.extend(title_ocr_tasks)
 
-    # Process OCR tasks in batches
+    # Process OCR tasks in batches with smart sizing
     if all_ocr_tasks:
-        print(f"Processing {len(all_ocr_tasks)} OCR tasks in parallel batches...")
+        # Use smart batching that considers both element count and total payload size
+        smart_batch_size = calculate_smart_batch_size(all_ocr_tasks, max_batch_size=batch_size, max_total_payload_size=2_000_000)  # 2MB limit
+        print(f"Processing {len(all_ocr_tasks)} OCR tasks in parallel batches (smart batch size: {smart_batch_size})...")
         try:
             if timing:
                 start_time = time.time()
             # Process all OCR batches in parallel
-            ocr_batch_results = extract_ocr_text_batch(all_ocr_tasks, api_key, batch_size, parallel=True)
+            ocr_batch_results = extract_ocr_text_batch(all_ocr_tasks, api_key, smart_batch_size, parallel=True)
             if timing:
                 ocr_time += time.time() - start_time
             
@@ -2707,10 +2784,12 @@ def generate_embeddings_from_result(result_obj, api_key=None):
     sections = [(i, chunk['content']) for i, chunk in enumerate(content_chunks)]
     
     # Use the new embedding batching function
+    # For embeddings, use a fixed reasonable batch size since content varies significantly
+    batch_size = 25  # Reasonable batch size to stay within API limits
     embedding_results = _make_embedding_batch_request(
         sections,
         client,
-        batch_size=25,  # Reasonable batch size to stay within API limits
+        batch_size=batch_size,
         api_description="embeddings"
     )
     
