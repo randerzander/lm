@@ -2463,11 +2463,8 @@ def save_to_lancedb(embedding_results, extract_dir=None, source_fn=None):
     start_time = time.time()
     
     try:
-        # Determine database path
-        if extract_dir:
-            db_path = os.path.join(extract_dir, "lancedb")
-        else:
-            db_path = "./lancedb"
+        # Use a single database in the project root for all documents
+        db_path = "./lancedb"
         
         # Connect to LanceDB
         db = lancedb.connect(db_path)
