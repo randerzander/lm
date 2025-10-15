@@ -217,8 +217,8 @@ def main():
     print(f"\nFound {len(results)} relevant results. Using top result for answer generation...")
     
     # Print the retrieved chunks before generating the answer
-    print("\nRetrieved content chunks:")
-    print("="*50)
+    #print("\nRetrieved content chunks:")
+    #print("="*50)
     for i, result in enumerate(results, 1):
         source_document = result.get('source_document', 'unknown')
         page_number = result.get('page_number', 'unknown')  # Fix: Use correct field name from LanceDB schema
@@ -229,10 +229,10 @@ def main():
             page_index = page_number
         content_length = result.get('page_content_length', len(result.get('content', '')))
         
-        print(f"\nChunk {i} (Document: {source_document}, Page: {page_index}, Length: {content_length} chars):")
-        print("-" * 50)
-        print(result['content'])
-        print("-" * 50)
+        #print(f"\nChunk {i} (Document: {source_document}, Page: {page_index}, Length: {content_length} chars):")
+        #print("-" * 50)
+        #print(result['content'])
+        #print("-" * 50)
     
     print("\nAnswer:\n")
     

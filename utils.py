@@ -2721,8 +2721,10 @@ def generate_embeddings_from_result(result_obj, api_key=None):
             result['page_name'] = chunk['page_name']
             result['element_type'] = chunk['element_type']
             result['source'] = chunk['source']
-            # Extract the page number from page_name (e.g., 'page_001' -> '001')
-            page_number = chunk['page_name'].replace('page_', '') if chunk['page_name'].startswith('page_') else chunk['page_name']
+            # Extract the page number from page_name (e.g., 'page_001' -> '1')
+            page_name_raw = chunk['page_name'].replace('page_', '') if chunk['page_name'].startswith('page_') else chunk['page_name']
+            # Remove leading zeros but preserve "0" for page 0
+            page_number = str(int(page_name_raw)) if page_name_raw.isdigit() else page_name_raw
             result['page_number'] = page_number  # Use actual page number where content was located
             result['content'] = chunk['content']  # Ensure content is set
     
