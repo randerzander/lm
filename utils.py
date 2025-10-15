@@ -44,7 +44,7 @@ def _make_batch_request(items, api_endpoint, headers, batch_size, payload_proces
         def process_single_batch(batch_idx_batch_items):
             batch_idx, batch_items = batch_idx_batch_items
             print(f"Processing {api_description} batch {batch_idx + 1}/{len(all_batches)} ({len(batch_items)} items)")
-            print(f"  Items in batch: {[os.path.basename(item) if isinstance(item, str) else item for item in batch_items]}")
+            # print(f"  Items in batch: {[os.path.basename(item) if isinstance(item, str) else item for item in batch_items]}")  # Commented out to reduce noise
             
             # Prepare batch payload using the provided processor
             payload = payload_processor(batch_items)
@@ -94,7 +94,7 @@ def _make_batch_request(items, api_endpoint, headers, batch_size, payload_proces
         for i in range(0, len(items), batch_size):
             batch_items = items[i:i + batch_size]
             print(f"Processing {api_description} batch {i//batch_size + 1}/{(len(items)-1)//batch_size + 1} ({len(batch_items)} items)")
-            print(f"  Items in batch: {[os.path.basename(item) if isinstance(item, str) else item for item in batch_items]}")
+            # print(f"  Items in batch: {[os.path.basename(item) if isinstance(item, str) else item for item in batch_items]}")  # Commented out to reduce noise
             
             # Prepare batch payload using the provided processor
             payload = payload_processor(batch_items)
@@ -157,15 +157,13 @@ def _make_embedding_batch_request(items, client, batch_size, api_description="em
                 embedding = response.data[j].embedding
                 
                 results.append({
-                    'page_index': page_idx,
-                    'content': content,
-                    'embedding': embedding
-                })
-                
-                print(f"Generated embedding for page {page_idx} (length: {len(content)} chars)")
+                        'page_index': page_idx,
+                        'content': content,
+                        'embedding': embedding
+                    })
                 
         except Exception as e:
-            print(f"Error processing {api_description} batch starting at page {batch_items[0][0]}: {str(e)}")
+            print(f"Error processing {api_description} batch starting at item {batch_items[0][0]}: {str(e)}")
             # Fallback: process individually if batch fails
             for page_idx, content in batch_items:
                 try:
@@ -184,10 +182,8 @@ def _make_embedding_batch_request(items, client, batch_size, api_description="em
                         'embedding': embedding
                     })
                     
-                    print(f"Generated embedding for page {page_idx} (length: {len(content)} chars) using fallback")
-                    
                 except Exception as e_single:
-                    print(f"Error generating embedding for page {page_idx}: {str(e_single)}")
+                    print(f"Error generating embedding for item {page_idx}: {str(e_single)}")
                     results.append({
                         'page_index': page_idx,
                         'content': content,
@@ -707,7 +703,7 @@ def process_page_images(pages_dir="pages", output_dir="page_elements", timing=Fa
         # Process page images in batches for page element detection
         for i in range(0, len(page_images), batch_size):
             batch_paths = page_images[i:i + batch_size]
-            print(f"Processing page elements batch: {batch_paths}")
+            # print(f"Processing page elements batch: {batch_paths}")  # Commented out to reduce noise
             
             if timing:
                 start_time = time.time()
@@ -2488,22 +2484,27 @@ def save_to_lancedb(embedding_results, extract_dir=None, source_fn=None):
         # Create schema for the table
         # Using PyArrow schema to define table structure
         schema = pa.schema([
-            pa.field("page_index", pa.int32()),
+            pa.field("page_number", pa.string()),          # Page number where content was located
             pa.field("content", pa.string()),
             pa.field("embedding", pa.list_(pa.float32())),  # Embedding vector
             pa.field("source_document", pa.string()),      # Name of the source document
-            pa.field("page_content_length", pa.int32())    # Length of content for metadata
+            pa.field("page_content_length", pa.int32()),   # Length of content for metadata
+            pa.field("content_type", pa.string())          # Type of content (page_text, chart, table, etc.)
         ])
         
         # Prepare data for insertion
         data = []
         for result in valid_results:
+            typ = result.get("element_type", "unknown")
+            cont = result["content"]
+            #print(f"{typ} {cont[0:10]}..., len: {len(cont)}")
             data.append({
-                "page_index": result["page_index"],
+                "page_number": result.get("page_number", "unknown"),  # Use actual page number where content was located
                 "content": result["content"],
                 "embedding": result["embedding"],
                 "source_document": source_fn or "unknown",
-                "page_content_length": len(result["content"])
+                "page_content_length": len(result["content"]),
+                "content_type": result.get("element_type", "unknown")  # Use element_type from result metadata
             })
         
         # Convert to PyArrow table
@@ -2535,4 +2536,195 @@ def save_to_lancedb(embedding_results, extract_dir=None, source_fn=None):
         print(f"Error saving to LanceDB: {str(e)}")
         indexing_time = time.time() - start_time
         return None, indexing_time
+
+def generate_embeddings_from_result(result_obj, api_key=None):
+    """
+    Generate embeddings directly from the result object with granular chunks 
+    for page texts, tables, and charts instead of full pages.
     
+    Args:
+        result_obj (dict): The result object from get_all_extracted_content
+        api_key (str): API key for NVIDIA embedding service. If not provided, 
+                      will try to get from environment variable NVIDIA_API_KEY
+
+    Returns:
+        tuple: A tuple containing (results list, total time in seconds)
+    """
+    import os
+    from openai import OpenAI
+    import time
+    import json
+    
+    start_time = time.time()
+    
+    # Set up API key
+    if api_key is None:
+        api_key = os.getenv("NVIDIA_API_KEY")
+        if not api_key:
+            print("NVIDIA_API_KEY environment variable not set. Skipping embeddings generation.")
+            return [], 0.0
+    
+    # Initialize the client
+    client = OpenAI(
+        api_key=api_key,
+        base_url="https://integrate.api.nvidia.com/v1"
+    )
+
+    # Prepare content chunks for embedding
+    content_chunks = []
+    
+    # Process each page in sorted order
+    pages = result_obj.get('pages', {})
+    for page_name in sorted(pages.keys(), key=lambda x: int(x.split('_')[-1]) if x.split('_')[-1].isdigit() else 0):
+        page_data = pages[page_name]
+        
+        # Add page text as a separate chunk if it exists
+        page_text = page_data.get('page_text', '')
+        if page_text.strip():
+            # Wrap page text in markdown format (e.g., as a section)
+            formatted_page_text = '# Page ' + page_name.replace('page_', '') + '\n\n' + page_text.strip()
+            content_chunks.append({
+                'type': 'page_text',
+                'page_name': page_name,
+                'content': formatted_page_text,
+                'element_type': 'page_text',
+                'source': page_name + '_page_text'
+            })
+        
+        # Process page elements (tables, charts, titles, etc.)
+        elements = page_data.get('elements', [])
+        for element_idx, element in enumerate(elements):
+            element_type = element.get('type', 'other')
+            content_texts = element.get('content_texts', [])
+            
+            # For tables, embed their markdown formatted content
+            if element_type == 'table' and content_texts:
+                # Format table content using the markdown formatting function
+                try:
+                    table_lines = format_markdown_table(element, content_texts)
+                    formatted_content = '\n'.join(table_lines) if table_lines else ''
+                    
+                    if formatted_content.strip():
+                        content_chunks.append({
+                            'type': element_type,
+                            'page_name': page_name,
+                            'content': formatted_content,
+                            'element_type': element_type,
+                            'source': page_name + '_' + element_type + '_' + str(element_idx+1)
+                        })
+                except:
+                    # Fallback if format_markdown_table fails
+                    element_content_parts = []
+                    for content in content_texts:
+                        text = content.get('text', '')
+                        if text.strip():
+                            element_content_parts.append(text.strip())
+                    if element_content_parts:
+                        combined_content = ' '.join(element_content_parts)
+                        content_chunks.append({
+                            'type': element_type,
+                            'page_name': page_name,
+                            'content': combined_content,
+                            'element_type': element_type,
+                            'source': page_name + '_' + element_type + '_' + str(element_idx+1)
+                        })
+            
+            # For charts, embed their markdown formatted content
+            elif element_type == 'chart' and content_texts:
+                # Format chart content using the markdown formatting function
+                try:
+                    chart_lines = format_markdown_chart(element, content_texts)
+                    formatted_content = '\n'.join(chart_lines) if chart_lines else ''
+                    
+                    if formatted_content.strip():
+                        content_chunks.append({
+                            'type': element_type,
+                            'page_name': page_name,
+                            'content': formatted_content,
+                            'element_type': element_type,
+                            'source': page_name + '_' + element_type + '_' + str(element_idx+1)
+                        })
+                except:
+                    # Fallback if format_markdown_chart fails
+                    element_content_parts = []
+                    for content in content_texts:
+                        text = content.get('text', '')
+                        if text.strip():
+                            element_content_parts.append(text.strip())
+                    if element_content_parts:
+                        combined_content = ' '.join(element_content_parts)
+                        content_chunks.append({
+                            'type': element_type,
+                            'page_name': page_name,
+                            'content': combined_content,
+                            'element_type': element_type,
+                            'source': page_name + '_' + element_type + '_' + str(element_idx+1)
+                        })
+            
+            # For other elements (excluding titles), embed their content as markdown formatted text
+            elif content_texts and element_type != 'title':
+                # Format other elements as markdown text (similar to how save_document_markdown does it)
+                element_content_parts = []
+                for content in content_texts:
+                    text = content.get('text', '')
+                    if text.strip():
+                        element_content_parts.append('- ' + text.strip())
+                
+                if element_content_parts:
+                    combined_content = '\\n'.join(element_content_parts)
+                    content_chunks.append({
+                        'type': element_type,
+                        'page_name': page_name,
+                        'content': combined_content,
+                        'element_type': element_type,
+                        'source': page_name + '_' + element_type + '_' + str(element_idx+1)
+                    })
+    
+    # Create section tuples for batching (index, content format that _make_embedding_batch_request expects)
+    sections = [(i, chunk['content']) for i, chunk in enumerate(content_chunks)]
+    
+    # Use the new embedding batching function
+    embedding_results = _make_embedding_batch_request(
+        sections,
+        client,
+        batch_size=25,  # Reasonable batch size to stay within API limits
+        api_description="embeddings"
+    )
+    
+    # Enhance results with additional metadata from content_chunks
+    for i, result in enumerate(embedding_results):
+        if i < len(content_chunks) and result.get('embedding') is not None:
+            chunk = content_chunks[i]
+            result['page_name'] = chunk['page_name']
+            result['element_type'] = chunk['element_type']
+            result['source'] = chunk['source']
+            # Extract the page number from page_name (e.g., 'page_001' -> '001')
+            page_number = chunk['page_name'].replace('page_', '') if chunk['page_name'].startswith('page_') else chunk['page_name']
+            result['page_number'] = page_number  # Use actual page number where content was located
+            result['content'] = chunk['content']  # Ensure content is set
+    
+    # Provide a summary of generated embeddings by type
+    if embedding_results:
+        page_text_count = sum(1 for r in embedding_results if r.get('element_type') == 'page_text')
+        table_count = sum(1 for r in embedding_results if r.get('element_type') == 'table')
+        chart_count = sum(1 for r in embedding_results if r.get('element_type') == 'chart')
+        other_count = len(embedding_results) - page_text_count - table_count - chart_count
+        
+        summary_parts = []
+        if page_text_count > 0:
+            summary_parts.append(str(page_text_count) + ' page texts')
+        if table_count > 0:
+            summary_parts.append(str(table_count) + ' tables')
+        if chart_count > 0:
+            summary_parts.append(str(chart_count) + ' charts')
+        if other_count > 0:
+            summary_parts.append(str(other_count) + ' other elements')
+        
+        summary_str = ', '.join(summary_parts)
+        total_time = time.time() - start_time
+        print('Granular embedding generation completed: ' + str(len(embedding_results)) + ' chunks (' + summary_str + ') in ' + str(round(total_time, 2)) + ' seconds')
+    else:
+        total_time = time.time() - start_time
+        print('Granular embedding generation completed in ' + str(round(total_time, 2)) + ' seconds (no embeddings generated)')
+    
+    return embedding_results, total_time

@@ -358,13 +358,13 @@ def extract(pdf_path="data/multimodal_test.pdf", output_dir="page_elements", ext
     # Generate embeddings for the markdown content
     if extract_dir and source_fn:
         markdown_path = os.path.join(extract_dir, f"{source_fn}.md")
-        if os.path.exists(markdown_path):
-            embedding_results, embeddings_time = utils.generate_embeddings_for_markdown(markdown_path)
-            if embedding_results:
-                utils.save_embeddings_to_json(embedding_results, extract_dir=extract_dir, source_fn=source_fn)
-                
-                # Save embeddings to LanceDB for queryable storage
-                _, lancedb_time = utils.save_to_lancedb(embedding_results, extract_dir=extract_dir, source_fn=source_fn)
+        # Generate granular embeddings from result object instead of markdown file
+        embedding_results, embeddings_time = utils.generate_embeddings_from_result(result)
+        if embedding_results:
+            utils.save_embeddings_to_json(embedding_results, extract_dir=extract_dir, source_fn=source_fn)
+            
+            # Save embeddings to LanceDB for queryable storage
+            _, lancedb_time = utils.save_to_lancedb(embedding_results, extract_dir=extract_dir, source_fn=source_fn)
     
     # Generate final comprehensive timing summary at the end
     if timing:
@@ -773,13 +773,13 @@ if __name__ == "__main__":
             # Generate embeddings for the markdown content
             if extract_dir and source_fn:
                 markdown_path = os.path.join(extract_dir, f"{source_fn}.md")
-                if os.path.exists(markdown_path):
-                    embedding_results, embeddings_time = utils.generate_embeddings_for_markdown(markdown_path)
-                    if embedding_results:
-                        utils.save_embeddings_to_json(embedding_results, extract_dir=extract_dir, source_fn=source_fn)
-                        
-                        # Save embeddings to LanceDB for queryable storage
-                        _, lancedb_time = utils.save_to_lancedb(embedding_results, extract_dir=extract_dir, source_fn=source_fn)
+                # Generate granular embeddings from result object instead of markdown file
+                embedding_results, embeddings_time = utils.generate_embeddings_from_result(result)
+                if embedding_results:
+                    utils.save_embeddings_to_json(embedding_results, extract_dir=extract_dir, source_fn=source_fn)
+                    
+                    # Save embeddings to LanceDB for queryable storage
+                    _, lancedb_time = utils.save_to_lancedb(embedding_results, extract_dir=extract_dir, source_fn=source_fn)
 
             # Report timing if needed
             total_time = time.time() - (time.time() - ai_start_time - pdf_extraction_time)  # Approximate
