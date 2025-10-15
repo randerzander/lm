@@ -89,7 +89,12 @@ def query_with_llm(context, question, result_metadata):
     
     # Extract metadata
     source_document = result_metadata.get('source_document', 'unknown')
-    page_index = result_metadata.get('page_index', 'unknown')
+    page_number = result_metadata.get('page_number', 'unknown')  # Fix: Use correct field name from LanceDB schema
+    # Clean up page number formatting - remove leading zeros
+    if page_number != 'unknown' and isinstance(page_number, str) and page_number.isdigit():
+        page_index = str(int(page_number))  # Convert "001" to "1"
+    else:
+        page_index = page_number
     
     # Check content type - based on the structure, we can infer content type from the context content
     content_type = "text"
@@ -216,7 +221,12 @@ def main():
     print("="*50)
     for i, result in enumerate(results, 1):
         source_document = result.get('source_document', 'unknown')
-        page_index = result.get('page_index', 'unknown')
+        page_number = result.get('page_number', 'unknown')  # Fix: Use correct field name from LanceDB schema
+        # Clean up page number formatting - remove leading zeros
+        if page_number != 'unknown' and isinstance(page_number, str) and page_number.isdigit():
+            page_index = str(int(page_number))  # Convert "001" to "1"
+        else:
+            page_index = page_number
         content_length = result.get('page_content_length', len(result.get('content', '')))
         
         print(f"\nChunk {i} (Document: {source_document}, Page: {page_index}, Length: {content_length} chars):")
