@@ -703,7 +703,7 @@ def process_page_images(pages_dir="pages", output_dir="page_elements", timing=Fa
         # Process page images in batches for page element detection
         for i in range(0, len(page_images), batch_size):
             batch_paths = page_images[i:i + batch_size]
-            # print(f"Processing page elements batch: {batch_paths}")  # Commented out to reduce noise
+            # print(f"DEBUG: Processing batch {i//batch_size + 1} with {len(batch_paths)} images: {batch_paths[:2]}{'...' if len(batch_paths) > 2 else ''}")  # Show first 2 paths for debugging
             
             if timing:
                 start_time = time.time()
@@ -713,9 +713,30 @@ def process_page_images(pages_dir="pages", output_dir="page_elements", timing=Fa
                 if timing:
                     page_elements_time += time.time() - start_time
                 
+                # DEBUG: Add diagnostic information for batch processing
+                # print(f"DEBUG: Batch results received - len(batch_results)={len(batch_results)}, batch_paths_count={len(batch_paths)}")
+                
+                # DEBUG: Inspect what batch_results contains
+                # if len(batch_results) > 0:
+                #     print(f"DEBUG: First batch_result type: {type(batch_results[0])}")
+                #     if isinstance(batch_results[0], dict) and 'data' in batch_results[0]:
+                #         print(f"DEBUG: First batch_result data keys: {list(batch_results[0]['data'].keys()) if isinstance(batch_results[0]['data'], dict) else type(batch_results[0]['data'])}")
+                #     elif hasattr(batch_results[0], '__iter__') and not isinstance(batch_results[0], str):
+                #         try:
+                #             print(f"DEBUG: First batch_result is iterable with {len(list(batch_results[0]))} items")
+                #         except:
+                #             print(f"DEBUG: First batch_result is iterable but length unknown")
+                
                 # Process the batch results
-                # The batch_results is a list where each element corresponds to a batch
-                batch_result = batch_results[i // batch_size]  # Get the corresponding batch result
+                # FIX: extract_bounding_boxes_batch returns results for the CURRENT batch (single batch),
+                # not a list of all batches processed so far.
+                # So we always take index 0, not i // batch_size
+                if len(batch_results) == 0:
+                    print(f"ERROR: No batch results returned for batch with {len(batch_paths)} images")
+                    raise ValueError(f"No batch results returned for batch with {len(batch_paths)} images")
+                
+                batch_result = batch_results[0]  # Get the result for the current batch
+                # print(f"DEBUG: Successfully retrieved batch_result at index 0 (current batch)")
                 
                 # The API response structure has 'data' field which contains page data for each image in the batch
                 if 'data' in batch_result:
@@ -811,6 +832,11 @@ def process_page_images(pages_dir="pages", output_dir="page_elements", timing=Fa
                         original_image.close()
             except Exception as e:
                 print(f"Error processing page elements batch: {str(e)}")
+                # DEBUG: Add more detailed error information
+                # import traceback
+                # print(f"DEBUG: Full traceback for batch error:")
+                # traceback.print_exc()
+                
                 # If batch processing fails, fall back to individual processing
                 for img_path in batch_paths:
                     # print(f"Falling back to processing {img_path} individually...")  # Commented out to reduce noise
