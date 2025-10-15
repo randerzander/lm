@@ -151,27 +151,23 @@ def query_with_llm(context, question, result_metadata):
 def main():
     parser = argparse.ArgumentParser(description="Query documents using LanceDB and LLM")
     parser.add_argument("query", nargs='?', help="Question to ask about the documents")
-    parser.add_argument("--db-path", help="Path to the LanceDB directory (default: ./extracts/lancedb)")
-    parser.add_argument("--source-document", help="Optional specific source document to search in (searches all documents if not provided)")
+    parser.add_argument("--db-path", help="Path to the LanceDB directory (default: ./lancedb)")
     parser.add_argument("--limit", type=int, default=5, help="Number of results to retrieve (default: 5)")
     
     args = parser.parse_args()
     
     # Set default db path if not provided
     if not args.db_path:
-        if args.source_document:
-            args.db_path = f"./extracts/{args.source_document}/lancedb"
+        # Default to a common lancedb path that can contain all documents
+        # If multiple document directories exist, we'll look for the first one with a lancedb directory
+        import glob
+        db_paths = glob.glob("./extracts/*/lancedb")
+        if db_paths:
+            # Use the first available lancedb directory
+            args.db_path = db_paths[0]
         else:
-            # Default to a common lancedb path that can contain all documents
-            # If multiple document directories exist, we'll look for the first one with a lancedb directory
-            import glob
-            db_paths = glob.glob("./extracts/*/lancedb")
-            if db_paths:
-                # Use the first available lancedb directory
-                args.db_path = db_paths[0]
-            else:
-                # Default fallback
-                args.db_path = "./extracts/lancedb"
+            # Default fallback
+            args.db_path = "./lancedb"
     
     # Check if query is provided either as argument or to be read from stdin
     if not args.query:
@@ -207,7 +203,7 @@ def main():
     
     # Query the database to get relevant context
     print("Searching for relevant context...")
-    results = query_lancedb(args.db_path, args.query, args.source_document, args.limit)
+    results = query_lancedb(args.db_path, args.query, None, args.limit)
     
     if not results:
         print("No relevant content found in the database.")
