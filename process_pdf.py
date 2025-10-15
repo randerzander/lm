@@ -129,7 +129,7 @@ def process_pdf_with_paths_multiprocessing(pdf_path, texts_dir, pages_dir, pages
             image_filename = os.path.join(pages_dir, f"page_{i+1:03d}.jpg")
             pil_image.save(image_filename, "JPEG", quality=80)  # Lower quality to reduce size
             
-            print(f"Processed page {i+1}: saved text to {text_filename} and image to {image_filename}")
+            # print(f"Processed page {i+1}: saved text to {text_filename} and image to {image_filename}")  # Commented out to reduce noise
             
             # Close the page to free memory
             page.close()
@@ -152,9 +152,9 @@ def process_pdf_with_paths_multiprocessing(pdf_path, texts_dir, pages_dir, pages
             batch_results = pool.starmap(process_pages_batch, args)
             
             # Print results
-            for batch_result in batch_results:
-                for result in batch_result:
-                    print(result)
+            # for batch_result in batch_results:
+            #     for result in batch_result:
+            #         print(result)  # Commented out to reduce noise
     
     pdf_extraction_time = time.time() - start_time
     print(f"PDF extraction completed in {pdf_extraction_time:.2f} seconds")
@@ -225,7 +225,7 @@ def process_pdf_with_paths_sequential(pdf_path, texts_dir, pages_dir):
         image_filename = os.path.join(pages_dir, f"page_{i+1:03d}.jpg")
         pil_image.save(image_filename, "JPEG", quality=80)  # Lower quality to reduce size
         
-        print(f"Processed page {i+1}: saved text to {text_filename} and image to {image_filename}")
+        # print(f"Processed page {i+1}: saved text to {text_filename} and image to {image_filename}")
         
         # Close the page to free memory
         page.close()
@@ -275,7 +275,7 @@ def process_pdf(pdf_path):
         image_filename = f"pages/page_{i+1:03d}.jpg"
         pil_image.save(image_filename, "JPEG", quality=80)  # Lower quality to reduce size
         
-        print(f"Processed page {i+1}: saved text to {text_filename} and image to {image_filename}")
+        # print(f"Processed page {i+1}: saved text to {text_filename} and image to {image_filename}")
         
         # Close the page to free memory
         page.close()

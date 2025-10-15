@@ -43,7 +43,7 @@ def _make_batch_request(items, api_endpoint, headers, batch_size, payload_proces
         
         def process_single_batch(batch_idx_batch_items):
             batch_idx, batch_items = batch_idx_batch_items
-            print(f"Processing {api_description} batch {batch_idx + 1}/{len(all_batches)} ({len(batch_items)} items)")
+            # print(f"Processing {api_description} batch {batch_idx + 1}/{len(all_batches)} ({len(batch_items)} items)")  # Commented out to reduce noise
             # print(f"  Items in batch: {[os.path.basename(item) if isinstance(item, str) else item for item in batch_items]}")  # Commented out to reduce noise
             
             # Prepare batch payload using the provided processor
@@ -93,7 +93,7 @@ def _make_batch_request(items, api_endpoint, headers, batch_size, payload_proces
         # Process items in batches sequentially (original behavior)
         for i in range(0, len(items), batch_size):
             batch_items = items[i:i + batch_size]
-            print(f"Processing {api_description} batch {i//batch_size + 1}/{(len(items)-1)//batch_size + 1} ({len(batch_items)} items)")
+            # print(f"Processing {api_description} batch {i//batch_size + 1}/{(len(items)-1)//batch_size + 1} ({len(batch_items)} items)")  # Commented out to reduce noise
             # print(f"  Items in batch: {[os.path.basename(item) if isinstance(item, str) else item for item in batch_items]}")  # Commented out to reduce noise
             
             # Prepare batch payload using the provided processor
@@ -235,7 +235,7 @@ def extract_bounding_boxes(image_path, api_key=None):
         ]
     }
 
-    print(f"Processing individual page element inference for: {image_path}")
+    # print(f"Processing individual page element inference for: {image_path}")  # Commented out to reduce noise
     response = requests.post(invoke_url, headers=headers, json=payload)
     
     if response.status_code == 200:
@@ -347,7 +347,7 @@ def extract_table_structure(image_path, api_key=None):
         ]
     }
 
-    print(f"Processing individual table structure inference for: {image_path}")
+    # print(f"Processing individual table structure inference for: {image_path}")  # Commented out to reduce noise
     response = requests.post(invoke_url, headers=headers, json=payload)
     
     if response.status_code == 200:
@@ -462,7 +462,7 @@ def extract_ocr_text(image_path, api_key=None):
         ]
     }
 
-    print(f"Processing individual OCR inference for: {image_path}")
+    # print(f"Processing individual OCR inference for: {image_path}")  # Commented out to reduce noise
     response = requests.post(invoke_url, headers=headers, json=payload)
     
     if response.status_code == 200:
@@ -581,7 +581,7 @@ def extract_graphic_elements(image_path, api_key=None):
         ]
     }
 
-    print(f"Processing individual graphic elements inference for: {image_path}")
+    # print(f"Processing individual graphic elements inference for: {image_path}")  # Commented out to reduce noise
     response = requests.post(invoke_url, headers=headers, json=payload)
     
     if response.status_code == 200:
@@ -722,11 +722,11 @@ def process_page_images(pages_dir="pages", output_dir="page_elements", timing=Fa
                     batch_page_data = batch_result['data']
                     
                     for img_idx, img_path in enumerate(batch_paths):
-                        print(f"Processing {img_path}...")
+                        # print(f"Processing {img_path}...")  # Commented out to reduce noise
                         if img_idx < len(batch_page_data):
                             page_data = batch_page_data[img_idx]
                         else:
-                            print(f"No data found in response for {img_path}")
+                            # print(f"No data found in response for {img_path}")  # Commented out to reduce noise
                             continue
                         
 
@@ -813,13 +813,13 @@ def process_page_images(pages_dir="pages", output_dir="page_elements", timing=Fa
                 print(f"Error processing page elements batch: {str(e)}")
                 # If batch processing fails, fall back to individual processing
                 for img_path in batch_paths:
-                    print(f"Falling back to processing {img_path} individually...")
+                    # print(f"Falling back to processing {img_path} individually...")  # Commented out to reduce noise
                     # We would need to call single image processing here
                     pass
     else:
         # Process page images individually if batch processing is disabled
         for image_path in sorted(page_images):
-            print(f"Processing {image_path}...")
+            # print(f"Processing {image_path}...")  # Commented out to reduce noise
             
             try:
                 # Extract bounding boxes (page elements)
