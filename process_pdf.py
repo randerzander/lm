@@ -685,6 +685,11 @@ if __name__ == "__main__":
         
         # Two-phase processing for multiple files:
         # Phase 1: PDF extraction (text and images) for ALL files first
+        import time
+        # Track total processing time and pages
+        total_start_time = time.time()
+        total_pages_processed = 0
+        
         print("\nStarting Phase 1: PDF extraction for all files...")
         extraction_results = []
         
@@ -761,6 +766,10 @@ if __name__ == "__main__":
 
             # Create consolidated result object
             result = get_all_extracted_content(pages_dir=pages_dir, output_dir=elements_dir)
+            # Count pages in this document for total tracking
+            pages_in_current_doc = len(result.get('pages', {}))
+            total_pages_processed += pages_in_current_doc
+            
 
             # Generate markdown representation of the document
             source_fn = os.path.splitext(os.path.basename(pdf_file))[0] if pdf_file else None
@@ -814,6 +823,14 @@ if __name__ == "__main__":
             print(f"\nProcessing completed for {pdf_file}! Total elements found: {content_counts['total_elements']}")
         
         print(f"\nCompleted processing all {len(pdf_files)} PDF files in {target_path}")
+        
+        # Print total runtime and page count summary
+        total_runtime = time.time() - total_start_time
+        print(f"\nSUMMARY:")
+        print(f"  Total Runtime: {total_runtime:.2f} seconds ({total_runtime/60:.2f} minutes)")
+        print(f"  Total Pages Processed: {total_pages_processed}")
+        print(f"  Average Pages per Second: {total_pages_processed/total_runtime:.2f}" if total_runtime > 0 else "N/A")
+        
         
     else:
         print(f"Processing {target_path} with {pages_per_process} pages per process")
