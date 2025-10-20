@@ -99,7 +99,7 @@ def process_pdf_with_paths_multiprocessing(pdf_path, texts_dir, pages_dir, pages
         # Respect user's choice but cap based on page availability
         max_processes = min(max_processes, (num_pages + pages_per_process - 1) // pages_per_process)
     
-    log(f"Processing {num_pages} pages using {max_processes} processes, {pages_per_process} pages per process...", level="ALWAYS")
+    log(f"Processing {num_pages} pages using {max_processes} processes, {pages_per_process} pages per process...")
     
     if num_pages == 1 or max_processes == 1:
         # If only one page or one process, process sequentially
@@ -417,10 +417,10 @@ Timing Summary:
             else:
                 log(f"  OCR: {ocr_time:.2f}s ({ocr_pct:.1f}%)", level="ALWAYS")
                 
-            log(f"""Embedding Generation: {embeddings_time:.2f}s ({embeddings_pct:.1f}%)", level="ALWAYS")
-
-            LanceDB Indexing: {lancedb_time:.2f}s ({lancedb_pct:.1f}%)", level="ALWAYS")
-            Total: {total_time:.2f}s
+            log(f"""
+Embedding Generation: {embeddings_time:.2f}s ({embeddings_pct:.1f}%)
+LanceDB Indexing: {lancedb_time:.2f}s ({lancedb_pct:.1f}%)
+Total: {total_time:.2f}s
             """, level="ALWAYS")
             
         elif timing:
@@ -568,48 +568,13 @@ def print_content_summary(output_dir="page_elements"):
                             content_type_counts[content_type] += 1
                             total_elements += 1
     
-    # Print summary
-    print("Content Summary:")
-    print("================")
     # Sort content types by count in descending order
     sorted_content_types = sorted(content_type_counts.items(), key=lambda x: x[1], reverse=True)
     content_str = ", ".join([f"{content_type}s: {count}" for content_type, count in sorted_content_types])
     # Get text statistics
     text_stats = get_text_stats(output_dir)
-    print(f"{content_str} | Total elements: {total_elements}, Words: {text_stats['text_stats']['words']}, Characters: {text_stats['text_stats']['chars']}, Lines: {text_stats['text_stats']['lines']}")
+    log(f"{content_str} | Total elements: {total_elements}, Words: {text_stats['text_stats']['words']}, Characters: {text_stats['text_stats']['chars']}, Lines: {text_stats['text_stats']['lines']}", level="ALWAYS")
     
-    # Count inference requests
-    for content_type_dir in glob.glob(os.path.join(output_dir, "*")):
-        if os.path.isdir(content_type_dir):
-            content_type = os.path.basename(content_type_dir)
-            
-            # Count inference requests for this content type
-            for jsonl_file in glob.glob(os.path.join(content_type_dir, "*.jsonl")):
-                with open(jsonl_file, 'r') as f:
-                    for line in f:
-                        if line.strip():
-                            data = json.loads(line)
-                            if content_type in ['table', 'chart']:
-                                # Tables and charts have cell-level inference
-                                if 'sub_image_path' in data:
-                                    cells_dir = data['sub_image_path'].replace('.jpg', '_cells')
-                                    if os.path.exists(cells_dir):
-                                        total_inference_requests += len(glob.glob(os.path.join(cells_dir, "*_ocr.json")))
-                            elif content_type == 'title':
-                                # Titles have direct OCR inference
-                                total_inference_requests += 1
-                            elif content_type == 'chart':
-                                # Charts have element-level inference
-                                if 'sub_image_path' in data:
-                                    elements_dir = data['sub_image_path'].replace('.jpg', '_elements')
-                                    if os.path.exists(elements_dir):
-                                        total_inference_requests += len(glob.glob(os.path.join(elements_dir, "*_ocr.json")))
-                            else:
-                                # Other content types (likely figures, equations, etc.)
-                                total_inference_requests += 1
-    
-
-
 
 if __name__ == "__main__":
     import sys
@@ -928,7 +893,7 @@ Average Pages per Second: {total_pages_processed/total_runtime:.2f}" if total_ru
         
         
     else:
-        print(f"Processing {target_path} with {pages_per_process} pages per process")
+        log(f"Processing {target_path} with {pages_per_process} pages per process")
         
         # Example usage - single PDF file
         # When no extract_dir is specified, the extract function will use the default "extracts/{source_fn}" structure
@@ -938,8 +903,6 @@ Average Pages per Second: {total_pages_processed/total_runtime:.2f}" if total_ru
         source_fn = os.path.splitext(os.path.basename(target_path))[0]
         output_dir = os.path.join("extracts", source_fn)
         
-        # Print content summary
-        print("\n" + "="*50)
         print_content_summary(f"{output_dir}/page_elements")
         
         # Print detailed content statistics
@@ -955,5 +918,3 @@ Average Pages per Second: {total_pages_processed/total_runtime:.2f}" if total_ru
         # Save the result to a JSON file in the extraction directory
         from utils import save_extracted_content_to_json
         save_extracted_content_to_json(result, extract_dir=output_dir)
-        
-        print("\nExtraction completed! Total elements found:", content_counts['total_elements'])

@@ -17,7 +17,8 @@ _last_log_time = None
 def log(message, level="DEBUG"):
     """
     Log a message with current timestamp and time elapsed since the last log call.
-    Format: [YYYY-MM-DD HH:MM:SS] message (+N secs)
+    Format: [YYYY-MM-DD HH:MM:SS] message (+N secs) for DEBUG level
+    For ALWAYS level: just print the message without timestamp or elapsed time
     
     Only prints DEBUG messages if global DEBUG mode is enabled.
     ALWAYS level messages are printed regardless of DEBUG mode.
@@ -28,7 +29,10 @@ def log(message, level="DEBUG"):
     debug_enabled = os.environ.get('DEBUG', '').lower() in ('true', '1', 'yes', 'on', 'debug')
     
     # Only print DEBUG level messages if debug is enabled, always print ALWAYS level
-    if level == "ALWAYS" or (level == "DEBUG" and debug_enabled):
+    if level == "ALWAYS":
+        # For ALWAYS level, just print the message without timestamp or elapsed time
+        print(message)
+    elif level == "DEBUG" and debug_enabled:
         current_time = time.time()
         current_datetime = datetime.datetime.fromtimestamp(current_time)
         timestamp_str = current_datetime.strftime("%Y-%m-%d %H:%M:%S")
@@ -68,9 +72,9 @@ def configure_api_rate_limit(max_concurrent_requests=10, requests_per_minute=40,
         # Create a new semaphore with the updated limit
         _api_rate_limit_semaphore = Semaphore(max_concurrent_requests)
         
-    print(f"API rate limit configured: {max_concurrent_requests} concurrent requests maximum, {requests_per_minute} requests per minute maximum")
+    log(f"API rate limit configured: {max_concurrent_requests} concurrent requests maximum, {requests_per_minute} requests per minute maximum")
     if max_workers:
-        print(f"Thread pool max workers configured: {max_workers}")
+        log(f"Thread pool max workers configured: {max_workers}")
 
 def _enforce_rate_limit():
     """
@@ -127,7 +131,7 @@ def _make_batch_request(items, api_endpoint, headers, batch_size, payload_proces
     
     if parallel and len(all_batches) > 1:
         # Process all batches in parallel
-        print(f"Processing {len(all_batches)} {api_description} batches in parallel...")
+        log(f"Processing {len(all_batches)} {api_description} batches in parallel...")
         
         def process_single_batch(batch_idx_batch_items):
             batch_idx, batch_items = batch_idx_batch_items
