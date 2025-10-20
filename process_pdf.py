@@ -2,7 +2,7 @@ import os
 import time
 import pypdfium2 as pdfium
 from PIL import Image
-from utils import get_all_extracted_content
+from utils import get_all_extracted_content, log
 import multiprocessing
 from functools import partial
 
@@ -99,7 +99,7 @@ def process_pdf_with_paths_multiprocessing(pdf_path, texts_dir, pages_dir, pages
         # Respect user's choice but cap based on page availability
         max_processes = min(max_processes, (num_pages + pages_per_process - 1) // pages_per_process)
     
-    print(f"Processing {num_pages} pages using {max_processes} processes, {pages_per_process} pages per process...")
+    log(f"Processing {num_pages} pages using {max_processes} processes, {pages_per_process} pages per process...", level="ALWAYS")
     
     if num_pages == 1 or max_processes == 1:
         # If only one page or one process, process sequentially
@@ -129,7 +129,7 @@ def process_pdf_with_paths_multiprocessing(pdf_path, texts_dir, pages_dir, pages
             image_filename = os.path.join(pages_dir, f"page_{i+1:03d}.jpg")
             pil_image.save(image_filename, "JPEG", quality=80)  # Lower quality to reduce size
             
-            # print(f"Processed page {i+1}: saved text to {text_filename} and image to {image_filename}")  # Commented out to reduce noise
+            log(f"Processed page {i+1}: saved text to {text_filename} and image to {image_filename}")
             
             # Close the page to free memory
             page.close()
@@ -151,13 +151,12 @@ def process_pdf_with_paths_multiprocessing(pdf_path, texts_dir, pages_dir, pages
             # Process all batches in parallel
             batch_results = pool.starmap(process_pages_batch, args)
             
-            # Print results
             # for batch_result in batch_results:
             #     for result in batch_result:
             #         print(result)  # Commented out to reduce noise
     
     pdf_extraction_time = time.time() - start_time
-    print(f"PDF extraction completed in {pdf_extraction_time:.2f} seconds")
+    log(f"PDF extraction completed in {pdf_extraction_time:.2f} seconds", level="ALWAYS")
     return pdf_extraction_time
 
 
@@ -225,7 +224,7 @@ def process_pdf_with_paths_sequential(pdf_path, texts_dir, pages_dir):
         image_filename = os.path.join(pages_dir, f"page_{i+1:03d}.jpg")
         pil_image.save(image_filename, "JPEG", quality=80)  # Lower quality to reduce size
         
-        # print(f"Processed page {i+1}: saved text to {text_filename} and image to {image_filename}")
+        log(f"Processed page {i+1}: saved text to {text_filename} and image to {image_filename}")
         
         # Close the page to free memory
         page.close()
@@ -234,7 +233,7 @@ def process_pdf_with_paths_sequential(pdf_path, texts_dir, pages_dir):
     pdf.close()
     
     pdf_extraction_time = time.time() - start_time
-    print(f"PDF extraction completed in {pdf_extraction_time:.2f} seconds")
+    log(f"PDF extraction completed in {pdf_extraction_time:.2f} seconds", level="ALWAYS")
     return pdf_extraction_time
 
 
@@ -275,7 +274,7 @@ def process_pdf(pdf_path):
         image_filename = f"pages/page_{i+1:03d}.jpg"
         pil_image.save(image_filename, "JPEG", quality=80)  # Lower quality to reduce size
         
-        # print(f"Processed page {i+1}: saved text to {text_filename} and image to {image_filename}")
+        log(f"Processed page {i+1}: saved text to {text_filename} and image to {image_filename}")
         
         # Close the page to free memory
         page.close()
@@ -284,7 +283,7 @@ def process_pdf(pdf_path):
     pdf.close()
     
     pdf_extraction_time = time.time() - start_time
-    print(f"PDF extraction completed in {pdf_extraction_time:.2f} seconds")
+    log(f"PDF extraction completed in {pdf_extraction_time:.2f} seconds", level="ALWAYS")
     
     return pdf_extraction_time
 
@@ -395,34 +394,39 @@ def extract(pdf_path="data/multimodal_test.pdf", output_dir="page_elements", ext
             ocr_task_counts = timing_data.get('ocr_task_counts', {'table_cells': 0, 'chart_elements': 0, 'titles': 0})
             total_ocr_tasks = ocr_task_counts['table_cells'] + ocr_task_counts['chart_elements'] + ocr_task_counts['titles']
             
-            print(f"Timing Summary:")
-            print(f"  PDF Extraction: {pdf_extraction_time:.2f}s ({pdf_extraction_pct:.1f}%)")
-            print(f"  Page Elements Inference: {page_elements_time:.2f}s ({page_elements_pct:.1f}%)")
-            print(f"  Table Structure: {table_structure_time:.2f}s ({table_structure_pct:.1f}%)")
-            print(f"  Chart Structure: {chart_structure_time:.2f}s ({chart_structure_pct:.1f}%)")
+            log(f"""
+Timing Summary:
+  PDF Extraction: {pdf_extraction_time:.2f}s ({pdf_extraction_pct:.1f}%)
+  Page Elements Inference: {page_elements_time:.2f}s ({page_elements_pct:.1f}%)
+  Table Structure: {table_structure_time:.2f}s ({table_structure_pct:.1f}%)
+  Chart Structure: {chart_structure_time:.2f}s ({chart_structure_pct:.1f}%)
+            """, level="ALWAYS")
             
             # OCR with content type breakdown
             if total_ocr_tasks > 0:
-                print(f"  OCR: {ocr_time:.2f}s ({ocr_pct:.1f}%) - breakdown:")
+                log(f"  OCR: {ocr_time:.2f}s ({ocr_pct:.1f}%) - breakdown:", level="ALWAYS")
                 if ocr_task_counts['titles'] > 0:
                     title_pct = (ocr_task_counts['titles'] / total_ocr_tasks) * 100
-                    print(f"    Titles: {ocr_task_counts['titles']} tasks ({title_pct:.1f}%)")
+                    log(f"    Titles: {ocr_task_counts['titles']} tasks ({title_pct:.1f}%)", level="ALWAYS")
                 if ocr_task_counts['table_cells'] > 0:
                     cell_pct = (ocr_task_counts['table_cells'] / total_ocr_tasks) * 100
-                    print(f"    Table Cells: {ocr_task_counts['table_cells']} tasks ({cell_pct:.1f}%)")
+                    log(f"    Table Cells: {ocr_task_counts['table_cells']} tasks ({cell_pct:.1f}%)", level="ALWAYS")
                 if ocr_task_counts['chart_elements'] > 0:
                     chart_pct = (ocr_task_counts['chart_elements'] / total_ocr_tasks) * 100
-                    print(f"    Chart Elements: {ocr_task_counts['chart_elements']} tasks ({chart_pct:.1f}%)")
+                    log(f"    Chart Elements: {ocr_task_counts['chart_elements']} tasks ({chart_pct:.1f}%)", level="ALWAYS")
             else:
-                print(f"  OCR: {ocr_time:.2f}s ({ocr_pct:.1f}%)")
+                log(f"  OCR: {ocr_time:.2f}s ({ocr_pct:.1f}%)", level="ALWAYS")
                 
-            print(f"  Embedding Generation: {embeddings_time:.2f}s ({embeddings_pct:.1f}%)")
-            print(f"  LanceDB Indexing: {lancedb_time:.2f}s ({lancedb_pct:.1f}%)")
-            print(f"  Total: {total_time:.2f}s")
+            log(f"""Embedding Generation: {embeddings_time:.2f}s ({embeddings_pct:.1f}%)", level="ALWAYS")
+
+            LanceDB Indexing: {lancedb_time:.2f}s ({lancedb_pct:.1f}%)", level="ALWAYS")
+            Total: {total_time:.2f}s
+            """, level="ALWAYS")
+            
         elif timing:
             # Fallback for when timing is disabled
             total_time = time.time() - start_time
-            print(f"Overall processing completed in {total_time:.2f} seconds")
+            log(f"Overall processing completed in {total_time:.2f} seconds", level="ALWAYS")
     
     return result
 
@@ -905,14 +909,6 @@ if __name__ == "__main__":
             from utils import get_content_counts_with_text_stats
             content_counts = get_content_counts_with_text_stats(f"{extract_dir}/page_elements")
             
-            print(f"\nContent Type Breakdown:")
-            for content_type, stats in content_counts['content_type_breakdown'].items():
-                print(f"  {content_type}:")
-                print(f"    Elements: {stats['total_elements']}")
-                print(f"    Words: {stats['text_stats']['words']}")
-                print(f"    Characters: {stats['text_stats']['chars']}")
-                print(f"    Lines: {stats['text_stats']['lines']}")
-            
             # Save the result to a JSON file in the extraction directory
             from utils import save_extracted_content_to_json
             save_extracted_content_to_json(result, extract_dir=extract_dir)
@@ -923,10 +919,12 @@ if __name__ == "__main__":
         
         # Print total runtime and page count summary
         total_runtime = time.time() - total_start_time
-        print(f"\nSUMMARY:")
-        print(f"  Total Runtime: {total_runtime:.2f} seconds ({total_runtime/60:.2f} minutes)")
-        print(f"  Total Pages Processed: {total_pages_processed}")
-        print(f"  Average Pages per Second: {total_pages_processed/total_runtime:.2f}" if total_runtime > 0 else "N/A")
+        log(f"""
+SUMMARY:
+Total Runtime: {total_runtime:.2f} seconds ({total_runtime/60:.2f} minutes)")
+Total Pages Processed: {total_pages_processed}")
+Average Pages per Second: {total_pages_processed/total_runtime:.2f}" if total_runtime > 0 else "N/A"
+        """, level="ALWAYS")
         
         
     else:

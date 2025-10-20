@@ -9,6 +9,38 @@ import concurrent.futures
 from threading import Lock, Semaphore
 import threading
 from collections import deque
+import datetime
+
+# Global variable to track the last log time
+_last_log_time = None
+
+def log(message, level="DEBUG"):
+    """
+    Log a message with current timestamp and time elapsed since the last log call.
+    Format: [YYYY-MM-DD HH:MM:SS] message (+N secs)
+    
+    Only prints DEBUG messages if global DEBUG mode is enabled.
+    ALWAYS level messages are printed regardless of DEBUG mode.
+    """
+    global _last_log_time
+    
+    # Check if DEBUG mode is enabled
+    debug_enabled = os.environ.get('DEBUG', '').lower() in ('true', '1', 'yes', 'on', 'debug')
+    
+    # Only print DEBUG level messages if debug is enabled, always print ALWAYS level
+    if level == "ALWAYS" or (level == "DEBUG" and debug_enabled):
+        current_time = time.time()
+        current_datetime = datetime.datetime.fromtimestamp(current_time)
+        timestamp_str = current_datetime.strftime("%Y-%m-%d %H:%M:%S")
+        
+        if _last_log_time is not None:
+            elapsed = current_time - _last_log_time
+            log_message = f"[{timestamp_str}] {message} (+{elapsed:.1f} secs)"
+        else:
+            log_message = f"[{timestamp_str}] {message}"
+        
+        print(log_message)
+        _last_log_time = current_time
 
 # Global rate limiter for API requests to prevent exceeding rate limits (default: 10 concurrent requests)
 _api_rate_limit_semaphore = Semaphore(10)  # Default rate limit: 10 concurrent requests
