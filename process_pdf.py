@@ -365,69 +365,58 @@ def extract(pdf_path="data/multimodal_test.pdf", output_dir="page_elements", ext
         # Generate granular embeddings from result object instead of markdown file
         embedding_results, embeddings_time = utils.generate_embeddings_from_result(result)
         if embedding_results:
-            utils.save_embeddings_to_json(embedding_results, extract_dir=extract_dir, source_fn=source_fn)
-            
-            # Save embeddings to LanceDB for queryable storage
             _, lancedb_time = utils.save_to_lancedb(embedding_results, extract_dir=extract_dir, source_fn=source_fn)
     
     # Generate final comprehensive timing summary at the end
-    if timing:
-        # Calculate detailed times by calling process_page_images again just to get timing info, with print disabled
-        # Actually, let's just call it once with timing and capture detailed results
-        # Since the detailed timing is already calculated in process_page_images but suppressed, 
-        # I need to run process_page_images one more time or pass timing data differently
-        # Better approach: modify process_page_images to return timing data when print_timing_summary=False
+    if timing and 'timing_data' in locals() and timing_data:
+        total_time = time.time() - start_time
+        # Calculate percentages
+        pdf_extraction_pct = (pdf_extraction_time / total_time) * 100 if total_time > 0 else 0
+        page_elements_pct = (page_elements_time / total_time) * 100 if total_time > 0 else 0
+        table_structure_pct = (table_structure_time / total_time) * 100 if total_time > 0 else 0
+        chart_structure_pct = (chart_structure_time / total_time) * 100 if total_time > 0 else 0
+        ocr_pct = (ocr_time / total_time) * 100 if total_time > 0 else 0
+        embeddings_pct = (embeddings_time / total_time) * 100 if total_time > 0 else 0
+        lancedb_pct = (lancedb_time / total_time) * 100 if total_time > 0 else 0
         
-        # Generate final comprehensive timing summary at the end
-        if timing and 'timing_data' in locals() and timing_data:
-            total_time = time.time() - start_time
-            # Calculate percentages
-            pdf_extraction_pct = (pdf_extraction_time / total_time) * 100 if total_time > 0 else 0
-            page_elements_pct = (page_elements_time / total_time) * 100 if total_time > 0 else 0
-            table_structure_pct = (table_structure_time / total_time) * 100 if total_time > 0 else 0
-            chart_structure_pct = (chart_structure_time / total_time) * 100 if total_time > 0 else 0
-            ocr_pct = (ocr_time / total_time) * 100 if total_time > 0 else 0
-            embeddings_pct = (embeddings_time / total_time) * 100 if total_time > 0 else 0
-            lancedb_pct = (lancedb_time / total_time) * 100 if total_time > 0 else 0
-            
-            # Get OCR task counts for breakdown
-            ocr_task_counts = timing_data.get('ocr_task_counts', {'table_cells': 0, 'chart_elements': 0, 'titles': 0})
-            total_ocr_tasks = ocr_task_counts['table_cells'] + ocr_task_counts['chart_elements'] + ocr_task_counts['titles']
-            
-            log(f"""
+        # Get OCR task counts for breakdown
+        ocr_task_counts = timing_data.get('ocr_task_counts', {'table_cells': 0, 'chart_elements': 0, 'titles': 0})
+        total_ocr_tasks = ocr_task_counts['table_cells'] + ocr_task_counts['chart_elements'] + ocr_task_counts['titles']
+        
+        log(f"""
 Timing Summary:
-  PDF Extraction: {pdf_extraction_time:.2f}s ({pdf_extraction_pct:.1f}%)
-  Page Elements Inference: {page_elements_time:.2f}s ({page_elements_pct:.1f}%)
-  Table Structure: {table_structure_time:.2f}s ({table_structure_pct:.1f}%)
-  Chart Structure: {chart_structure_time:.2f}s ({chart_structure_pct:.1f}%)
-            """, level="ALWAYS")
+PDF Extraction: {pdf_extraction_time:.2f}s ({pdf_extraction_pct:.1f}%)
+Page Elements Inference: {page_elements_time:.2f}s ({page_elements_pct:.1f}%)
+Table Structure: {table_structure_time:.2f}s ({table_structure_pct:.1f}%)
+Chart Structure: {chart_structure_time:.2f}s ({chart_structure_pct:.1f}%)
+        """, level="ALWAYS")
+        
+        # OCR with content type breakdown
+        if total_ocr_tasks > 0:
+            log(f"  OCR: {ocr_time:.2f}s ({ocr_pct:.1f}%) - breakdown:", level="ALWAYS")
+            if ocr_task_counts['titles'] > 0:
+                title_pct = (ocr_task_counts['titles'] / total_ocr_tasks) * 100
+                log(f"    Titles: {ocr_task_counts['titles']} tasks ({title_pct:.1f}%)", level="ALWAYS")
+            if ocr_task_counts['table_cells'] > 0:
+                cell_pct = (ocr_task_counts['table_cells'] / total_ocr_tasks) * 100
+                log(f"    Table Cells: {ocr_task_counts['table_cells']} tasks ({cell_pct:.1f}%)", level="ALWAYS")
+            if ocr_task_counts['chart_elements'] > 0:
+                chart_pct = (ocr_task_counts['chart_elements'] / total_ocr_tasks) * 100
+                log(f"    Chart Elements: {ocr_task_counts['chart_elements']} tasks ({chart_pct:.1f}%)", level="ALWAYS")
+        else:
+            log(f"  OCR: {ocr_time:.2f}s ({ocr_pct:.1f}%)", level="ALWAYS")
             
-            # OCR with content type breakdown
-            if total_ocr_tasks > 0:
-                log(f"  OCR: {ocr_time:.2f}s ({ocr_pct:.1f}%) - breakdown:", level="ALWAYS")
-                if ocr_task_counts['titles'] > 0:
-                    title_pct = (ocr_task_counts['titles'] / total_ocr_tasks) * 100
-                    log(f"    Titles: {ocr_task_counts['titles']} tasks ({title_pct:.1f}%)", level="ALWAYS")
-                if ocr_task_counts['table_cells'] > 0:
-                    cell_pct = (ocr_task_counts['table_cells'] / total_ocr_tasks) * 100
-                    log(f"    Table Cells: {ocr_task_counts['table_cells']} tasks ({cell_pct:.1f}%)", level="ALWAYS")
-                if ocr_task_counts['chart_elements'] > 0:
-                    chart_pct = (ocr_task_counts['chart_elements'] / total_ocr_tasks) * 100
-                    log(f"    Chart Elements: {ocr_task_counts['chart_elements']} tasks ({chart_pct:.1f}%)", level="ALWAYS")
-            else:
-                log(f"  OCR: {ocr_time:.2f}s ({ocr_pct:.1f}%)", level="ALWAYS")
-                
-            log(f"""
+        log(f"""
 Embedding Generation: {embeddings_time:.2f}s ({embeddings_pct:.1f}%)
 LanceDB Indexing: {lancedb_time:.2f}s ({lancedb_pct:.1f}%)
 Total: {total_time:.2f}s
-            """, level="ALWAYS")
-            
-        elif timing:
-            # Fallback for when timing is disabled
-            total_time = time.time() - start_time
-            log(f"Overall processing completed in {total_time:.2f} seconds", level="ALWAYS")
-    
+        """, level="ALWAYS")
+        
+    elif timing:
+        # Fallback for when timing is disabled
+        total_time = time.time() - start_time
+        log(f"Overall processing completed in {total_time:.2f} seconds", level="ALWAYS")
+
     return result
 
 

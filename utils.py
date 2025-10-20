@@ -135,8 +135,8 @@ def _make_batch_request(items, api_endpoint, headers, batch_size, payload_proces
         
         def process_single_batch(batch_idx_batch_items):
             batch_idx, batch_items = batch_idx_batch_items
-            # print(f"Processing {api_description} batch {batch_idx + 1}/{len(all_batches)} ({len(batch_items)} items)")  # Commented out to reduce noise
-            # print(f"  Items in batch: {[os.path.basename(item) if isinstance(item, str) else item for item in batch_items]}")  # Commented out to reduce noise
+            log(f"Processing {api_description} batch {batch_idx + 1}/{len(all_batches)} ({len(batch_items)} items)")  # Commented out to reduce noise
+            log(f"  Items in batch: {[os.path.basename(item) if isinstance(item, str) else item for item in batch_items]}")  # Commented out to reduce noise
             
             # Prepare batch payload using the provided processor
             payload = payload_processor(batch_items)
@@ -271,7 +271,7 @@ def calculate_smart_batch_size(file_paths, max_batch_size=25, max_total_payload_
     # Return the most restrictive limit
     smart_batch_size = min(max_batch_size, max_batch_by_size)
     
-    print(f"Smart batch sizing: {len(file_paths)} files, avg size ~{avg_file_size//1000}KB, "
+    log(f"Smart batch sizing: {len(file_paths)} files, avg size ~{avg_file_size//1000}KB, "
           f"batch size: {smart_batch_size} (was {max_batch_size})")
     
     return smart_batch_size
@@ -295,7 +295,7 @@ def _make_embedding_batch_request(items, client, batch_size, api_description="em
     # Process items in batches
     for i in range(0, len(items), batch_size):
         batch_items = items[i:i + batch_size]
-        print(f"Processing {api_description} batch {i//batch_size + 1}/{(len(items)-1)//batch_size + 1} ({len(batch_items)} items)")
+        log(f"Processing {api_description} batch {i//batch_size + 1}/{(len(items)-1)//batch_size + 1} ({len(batch_items)} items)")
         
         # Prepare batch content
         batch_contents = [item[1] for item in batch_items]  # item[1] is the content
@@ -921,7 +921,7 @@ def process_page_images(pages_dir="pages", output_dir="page_elements", timing=Fa
     page_images = glob(os.path.join(pages_dir, "*.jpg")) + glob(os.path.join(pages_dir, "*.png"))
     
     if batch_processing:
-        print(f"Processing {len(page_images)} page images using batch processing with batch size {batch_size}...")
+        log(f"Processing {len(page_images)} page images using batch processing...", level="ALWAYS")
         
         # Process page images in batches for page element detection
         for i in range(0, len(page_images), batch_size):
@@ -1224,7 +1224,7 @@ def process_page_images(pages_dir="pages", output_dir="page_elements", timing=Fa
     
     # Now process all the table structure tasks in batches
     if table_structure_tasks:
-        print(f"Processing {len(table_structure_tasks)} table structure tasks in parallel batches...")
+        log(f"Processing {len(table_structure_tasks)} table structure tasks in parallel batches...", level="ALWAYS")
         
         # Extract the temporary image paths to process in batch
         temp_paths = [task['temp_path'] for task in table_structure_tasks]
@@ -1432,7 +1432,7 @@ def process_page_images(pages_dir="pages", output_dir="page_elements", timing=Fa
 
     # Now process all the chart graphic elements tasks in batches
     if chart_graphic_elements_tasks:
-        print(f"Processing {len(chart_graphic_elements_tasks)} chart graphic elements tasks in parallel batches...")
+        log(f"Processing {len(chart_graphic_elements_tasks)} chart graphic elements tasks in parallel batches...", level="ALWAYS")
         
         # Extract the temporary image paths to process in batch
         temp_paths = [task['temp_path'] for task in chart_graphic_elements_tasks]
@@ -1658,7 +1658,7 @@ def process_page_images(pages_dir="pages", output_dir="page_elements", timing=Fa
     if all_ocr_tasks:
         # Use smart batching that considers both element count and total payload size
         smart_batch_size = calculate_smart_batch_size(all_ocr_tasks, max_batch_size=batch_size, max_total_payload_size=2_000_000)  # 2MB limit
-        print(f"Processing {len(all_ocr_tasks)} OCR tasks in parallel batches (smart batch size: {smart_batch_size})...")
+        log(f"Processing {len(all_ocr_tasks)} OCR tasks in parallel batches (smart batch size: {smart_batch_size})...", level="ALWAYS")
         try:
             if timing:
                 start_time = time.time()
@@ -2603,7 +2603,7 @@ def save_document_markdown(result_obj, extract_dir=None, source_fn=None):
     with open(output_path, 'w', encoding='utf-8') as f:
         f.write(final_markdown)
     
-    print(f"Document markdown saved to {output_path}")
+    log(f"Document markdown saved to {output_path}")
 
 
 def generate_embeddings_for_markdown(markdown_file_path, api_key=None):
@@ -2698,7 +2698,7 @@ def save_embeddings_to_json(embedding_results, extract_dir=None, source_fn=None)
     with open(output_path, 'w', encoding='utf-8') as f:
         json.dump(embedding_results, f, indent=2)
     
-    print(f"Embeddings saved to {output_path}")
+    log(f"Embeddings saved to {output_path}")
 
 
 def save_to_lancedb(embedding_results, extract_dir=None, source_fn=None):
@@ -2774,9 +2774,9 @@ def save_to_lancedb(embedding_results, extract_dir=None, source_fn=None):
             table = db.create_table(table_name, table_data)
         
         indexing_time = time.time() - start_time
-        print(f"Successfully saved {len(valid_results)} embeddings to LanceDB table '{table_name}' in {db_path}")
-        print(f"LanceDB table has {table.count_rows()} total rows")
-        print(f"LanceDB indexing completed in {indexing_time:.2f} seconds")
+        log(f"Successfully saved {len(valid_results)} embeddings to LanceDB table '{table_name}' in {db_path}")
+        log(f"LanceDB table has {table.count_rows()} total rows")
+        log(f"LanceDB indexing completed in {indexing_time:.2f} seconds", level="ALWAYS")
         
         return table_name, indexing_time
         
@@ -2978,7 +2978,7 @@ def generate_embeddings_from_result(result_obj, api_key=None):
         
         summary_str = ', '.join(summary_parts)
         total_time = time.time() - start_time
-        print('Granular embedding generation completed: ' + str(len(embedding_results)) + ' chunks (' + summary_str + ') in ' + str(round(total_time, 2)) + ' seconds')
+        log('Embeddings completed: ' + str(len(embedding_results)) + ' chunks (' + summary_str + ') in ' + str(round(total_time, 2)) + 's', level="ALWAYS")
     else:
         total_time = time.time() - start_time
         print('Granular embedding generation completed in ' + str(round(total_time, 2)) + ' seconds (no embeddings generated)')
