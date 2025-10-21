@@ -304,38 +304,24 @@ def extract(pdf_path="data/multimodal_test.pdf", output_dir="page_elements", ext
         # Get OCR task counts for breakdown
         ocr_task_counts = timing_data.get('ocr_task_counts', {'table_cells': 0, 'chart_elements': 0, 'titles': 0})
         total_ocr_tasks = ocr_task_counts['table_cells'] + ocr_task_counts['chart_elements'] + ocr_task_counts['titles']
+
+        ocr_task_counts = timing_data.get('ocr_task_counts', {'table_cells': 0, 'chart_elements': 0, 'titles': 0})
+        total_ocr_tasks = ocr_task_counts['table_cells'] + ocr_task_counts['chart_elements'] + ocr_task_counts['titles']
+        if total_ocr_tasks > 0:
+            title_pct = (ocr_task_counts['titles'] / total_ocr_tasks) * 100
+            cell_pct = (ocr_task_counts['table_cells'] / total_ocr_tasks) * 100
+            chart_pct = (ocr_task_counts['chart_elements'] / total_ocr_tasks) * 100
         
         log(f"""
 Timing Summary:
-Setup & Directory Creation: {setup_time:.2f}s ({setup_pct:.1f}%)
-Module Import: {import_time:.2f}s ({import_pct:.1f}%)
-Rate Limit Configuration: {rate_limit_time:.2f}s ({rate_limit_pct:.1f}%)
 PDF Extraction: {pdf_extraction_time:.2f}s ({pdf_extraction_pct:.1f}%)
 AI Processing (Elements, Structure, OCR): {ai_processing_time_total:.2f}s ({ai_processing_pct:.1f}%)
-        """, level="ALWAYS")
-        
-        # OCR with content type breakdown (if we have OCR timing data from AI processing)
-        if timing_data and 'ocr_task_counts' in timing_data:
-            ocr_task_counts = timing_data.get('ocr_task_counts', {'table_cells': 0, 'chart_elements': 0, 'titles': 0})
-            total_ocr_tasks = ocr_task_counts['table_cells'] + ocr_task_counts['chart_elements'] + ocr_task_counts['titles']
-            if total_ocr_tasks > 0:
-                title_pct = (ocr_task_counts['titles'] / total_ocr_tasks) * 100
-                cell_pct = (ocr_task_counts['table_cells'] / total_ocr_tasks) * 100
-                chart_pct = (ocr_task_counts['chart_elements'] / total_ocr_tasks) * 100
-                log(f"""
-OCR Breakdown:
-  Titles: {ocr_task_counts['titles']} tasks ({title_pct:.1f}%)
-  Table Cells: {ocr_task_counts['table_cells']} tasks ({cell_pct:.1f}%)
-  Chart Elements: {ocr_task_counts['chart_elements']} tasks ({chart_pct:.1f}%)
-                """, level="ALWAYS")
-            
-        log(f"""
-Result Creation: {result_creation_time:.2f}s ({result_creation_pct:.1f}%)
-Markdown Generation: {markdown_generation_time:.2f}s ({markdown_generation_pct:.1f}%)
+  OCR Breakdown:
+    Titles: {ocr_task_counts['titles']} tasks ({title_pct:.1f}%)
+    Table Cells: {ocr_task_counts['table_cells']} tasks ({cell_pct:.1f}%)
+    Chart Elements: {ocr_task_counts['chart_elements']} tasks ({chart_pct:.1f}%)
 Embedding Generation: {embedding_generation_time:.2f}s ({embedding_generation_pct:.1f}%)
 LanceDB Indexing: {lancedb_time:.2f}s ({lancedb_pct:.1f}%)
-Post-Processing: {post_processing_time:.2f}s ({post_processing_pct:.1f}%)
-Unaccounted/Overhead: {remaining_processing_time:.2f}s ({remaining_processing_pct:.1f}%)
 Total: {total_time:.2f}s
         """, level="ALWAYS")
 

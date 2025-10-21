@@ -2504,7 +2504,7 @@ def save_extracted_content_to_json(result_obj, extract_dir=None, output_file="ex
     
     with open(output_path, "w") as f:
         json.dump(result_obj, f, indent=2)
-    print(f"Extracted content saved to {output_path}")
+    log(f"Extracted content saved to {output_path}")
 
 
 def save_document_markdown(result_obj, extract_dir=None, source_fn=None):
@@ -2670,7 +2670,6 @@ def save_to_lancedb(embedding_results, extract_dir=None, source_fn=None):
     indexing_time = time.time() - start_time
     log(f"Successfully saved {len(valid_results)} embeddings to LanceDB table '{table_name}' in {db_path}")
     log(f"LanceDB table has {table.count_rows()} total rows")
-    log(f"LanceDB indexing completed in {indexing_time:.2f} seconds", level="ALWAYS")
     
     return table_name, indexing_time
 
