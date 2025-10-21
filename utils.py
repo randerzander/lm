@@ -873,7 +873,7 @@ def extract_graphic_elements_batch(image_paths, api_key=None, batch_size=5):
         "graphic elements"
     )
 
-def process_page_images(pages_dir="pages", output_dir="page_elements", timing=False, ocr_titles=True, batch_processing=True, batch_size=25, pdf_extraction_time=0, print_timing_summary=True):
+def process_page_images(pages_dir="pages", output_dir="page_elements", timing=False, ocr_titles=True, batch_processing=True, batch_size=25, pdf_extraction_time=0):
     # Track all timing values to return when needed
     page_elements_time = 0
     table_structure_time = 0
@@ -1726,17 +1726,6 @@ def process_page_images(pages_dir="pages", output_dir="page_elements", timing=Fa
                         json.dump(ocr_result, f, indent=2)
                 except Exception as e_individual:
                     print(f"Error performing OCR on {img_path}: {str(e_individual)}")
-
-    # Report timing if requested
-    if timing and print_timing_summary:
-        total_time = pdf_extraction_time + page_elements_time + table_structure_time + chart_structure_time + ocr_time
-        print(f"Timing Summary:")
-        print(f"  PDF Extraction: {pdf_extraction_time:.2f}s")
-        print(f"  Page Elements Inference: {page_elements_time:.2f}s")
-        print(f"  Table Structure: {table_structure_time:.2f}s")
-        print(f"  Chart Structure: {chart_structure_time:.2f}s")
-        print(f"  OCR: {ocr_time:.2f}s")
-        print(f"  Total: {total_time:.2f}s")
 
     # Return timing data if requested (even if not printed)
     if timing:

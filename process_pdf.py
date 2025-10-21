@@ -68,7 +68,7 @@ def process_pages_batch(pdf_path, page_nums, texts_dir, pages_dir):
     return results
 
 
-def process_pdf_with_paths_multiprocessing(pdf_path, texts_dir, pages_dir, pages_per_process=1, max_processes=None):
+def process_pdf_with_paths(pdf_path, texts_dir, pages_dir, pages_per_process=1, max_processes=None):
     """
     Process PDF and save outputs to specified directories using multiprocessing.
     
@@ -101,136 +101,19 @@ def process_pdf_with_paths_multiprocessing(pdf_path, texts_dir, pages_dir, pages
     
     log(f"Processing {num_pages} pages using {max_processes} processes, {pages_per_process} pages per process...")
     
-    if num_pages == 1 or max_processes == 1:
-        # If only one page or one process, process sequentially
-        pdf = pdfium.PdfDocument(pdf_path)
-        for i in range(len(pdf)):
-            page = pdf.get_page(i)
-            
-            # Extract text from the page
-            text = page.get_textpage().get_text_bounded()
-            
-            # Save the text to a file
-            text_filename = os.path.join(texts_dir, f"page_{i+1:03d}.txt")
-            with open(text_filename, 'w', encoding='utf-8') as f:
-                f.write(text)
-            
-            # Render the page as an image
-            pil_image = page.render(
-                scale=1  # 1x scaling to keep image size manageable for API
-            ).to_pil()
-            
-            # Resize image if needed to meet API constraints
-            # Calculate new dimensions keeping aspect ratio
-            max_size = (1024, 1024)  # Reasonable size for API
-            pil_image.thumbnail(max_size, Image.LANCZOS)
-            
-            # Save the image
-            image_filename = os.path.join(pages_dir, f"page_{i+1:03d}.jpg")
-            pil_image.save(image_filename, "JPEG", quality=80)  # Lower quality to reduce size
-            
-            log(f"Processed page {i+1}: saved text to {text_filename} and image to {image_filename}")
-            
-            # Close the page to free memory
-            page.close()
+    # Use multiprocessing for multiple pages
+    with multiprocessing.Pool(processes=max_processes) as pool:
+        # Create batches of pages
+        page_batches = []
+        for i in range(0, num_pages, pages_per_process):
+            batch = list(range(i, min(i + pages_per_process, num_pages)))
+            page_batches.append(batch)
         
-        # Close the document
-        pdf.close()
-    else:
-        # Use multiprocessing for multiple pages
-        with multiprocessing.Pool(processes=max_processes) as pool:
-            # Create batches of pages
-            page_batches = []
-            for i in range(0, num_pages, pages_per_process):
-                batch = list(range(i, min(i + pages_per_process, num_pages)))
-                page_batches.append(batch)
-            
-            # Create arguments for each batch
-            args = [(pdf_path, batch, texts_dir, pages_dir) for batch in page_batches]
-            
-            # Process all batches in parallel
-            batch_results = pool.starmap(process_pages_batch, args)
-            
-            # for batch_result in batch_results:
-            #     for result in batch_result:
-            #         print(result)  # Commented out to reduce noise
-    
-    pdf_extraction_time = time.time() - start_time
-    log(f"PDF extraction completed in {pdf_extraction_time:.2f} seconds", level="ALWAYS")
-    return pdf_extraction_time
-
-
-def process_pdf_with_paths(pdf_path, texts_dir, pages_dir, pages_per_process=1, max_processes=None):
-    """
-    Process PDF and save outputs to specified directories.
-    
-    Args:
-        pdf_path (str): Path to the PDF file to process
-        texts_dir (str): Directory to save extracted text files
-        pages_dir (str): Directory to save extracted page images
-        pages_per_process (int): Number of pages to process in each process (default: 1)
-        max_processes (int): Maximum number of processes to use (default: None, which uses system CPU count)
-    """
-    # For benchmarking, we can switch between sequential and multiprocessing
-    # Uncomment the line below to use sequential processing instead
-    # return process_pdf_with_paths_sequential(pdf_path, texts_dir, pages_dir)
-    
-    # Use multiprocessing version
-    return process_pdf_with_paths_multiprocessing(pdf_path, texts_dir, pages_dir, pages_per_process, max_processes)
-
-
-def process_pdf_with_paths_sequential(pdf_path, texts_dir, pages_dir):
-    """
-    Process PDF and save outputs to specified directories using sequential processing.
-    
-    Args:
-        pdf_path (str): Path to the PDF file to process
-        texts_dir (str): Directory to save extracted text files
-        pages_dir (str): Directory to save extracted page images
-    """
-    # Track time for PDF extraction
-    start_time = time.time()
-    
-    # Create output directories
-    os.makedirs(texts_dir, exist_ok=True)
-    os.makedirs(pages_dir, exist_ok=True)
-    
-    # Load the PDF document
-    pdf = pdfium.PdfDocument(pdf_path)
-    
-    # Process each page
-    for i in range(len(pdf)):
-        page = pdf.get_page(i)
+        # Create arguments for each batch
+        args = [(pdf_path, batch, texts_dir, pages_dir) for batch in page_batches]
         
-        # Extract text from the page
-        text = page.get_textpage().get_text_bounded()
-        
-        # Save the text to a file
-        text_filename = os.path.join(texts_dir, f"page_{i+1:03d}.txt")
-        with open(text_filename, 'w', encoding='utf-8') as f:
-            f.write(text)
-        
-        # Render the page as an image
-        pil_image = page.render(
-            scale=1  # 1x scaling to keep image size manageable for API
-        ).to_pil()
-        
-        # Resize image if needed to meet API constraints
-        # Calculate new dimensions keeping aspect ratio
-        max_size = (1024, 1024)  # Reasonable size for API
-        pil_image.thumbnail(max_size, Image.LANCZOS)
-        
-        # Save the image
-        image_filename = os.path.join(pages_dir, f"page_{i+1:03d}.jpg")
-        pil_image.save(image_filename, "JPEG", quality=80)  # Lower quality to reduce size
-        
-        log(f"Processed page {i+1}: saved text to {text_filename} and image to {image_filename}")
-        
-        # Close the page to free memory
-        page.close()
-    
-    # Close the document
-    pdf.close()
+        # Process all batches in parallel
+        batch_results = pool.starmap(process_pages_batch, args)
     
     pdf_extraction_time = time.time() - start_time
     log(f"PDF extraction completed in {pdf_extraction_time:.2f} seconds", level="ALWAYS")
@@ -312,6 +195,8 @@ def extract(pdf_path="data/multimodal_test.pdf", output_dir="page_elements", ext
     
     start_time = time.time()
     
+    # Timing for setup operations
+    setup_start = time.time()
     # Generate default extract_dir based on the source PDF filename if not provided
     if extract_dir is None:
         source_fn = os.path.splitext(os.path.basename(pdf_path))[0]  # Get filename without extension
@@ -330,54 +215,89 @@ def extract(pdf_path="data/multimodal_test.pdf", output_dir="page_elements", ext
     # Create subdirectories in extract directory
     os.makedirs(pages_dir, exist_ok=True)
     os.makedirs(texts_dir, exist_ok=True)
+    setup_time = time.time() - setup_start
     
     # Step 1: Extract text and images from PDF
     pdf_extraction_time = process_pdf_with_paths(pdf_path, texts_dir, pages_dir, pages_per_process, max_processes)
     
     # Step 2: Process page images to extract content elements with structure and OCR
+    import_start = time.time()
     import utils
+    import_time = time.time() - import_start
+    
     # Configure API rate limiting
+    rate_limit_start = time.time()
     utils.configure_api_rate_limit(max_concurrent_requests, requests_per_minute, max_workers)
-    timing_data = utils.process_page_images(pages_dir=pages_dir, output_dir=elements_dir, timing=timing, ocr_titles=ocr_titles, batch_processing=True, batch_size=25, pdf_extraction_time=pdf_extraction_time, print_timing_summary=False)
-    if timing_data:
-        page_elements_time = timing_data['page_elements_time']
-        table_structure_time = timing_data['table_structure_time']
-        chart_structure_time = timing_data['chart_structure_time']
-        ocr_time = timing_data['ocr_time']
-        ai_processing_time = timing_data['ai_processing_time']
-    else:
-        ai_processing_time = 0  # Fallback if timing disabled
+    rate_limit_time = time.time() - rate_limit_start
+    
+    # Process page images to extract content elements with structure and OCR
+    ai_processing_start = time.time()
+    timing_data = utils.process_page_images(pages_dir=pages_dir, output_dir=elements_dir, timing=timing, ocr_titles=ocr_titles, batch_processing=True, batch_size=25, pdf_extraction_time=pdf_extraction_time)
+    ai_processing_time_total = time.time() - ai_processing_start
+
+    page_elements_time = timing_data['page_elements_time']
+    table_structure_time = timing_data['table_structure_time']
+    chart_structure_time = timing_data['chart_structure_time']
+    ocr_time = timing_data['ocr_time']
+    # Use the actual AI processing time (the time spent in utils.process_page_images function)
+    ai_processing_time = timing_data['ai_processing_time']
     
     # Step 3: Create consolidated result object
+    result_creation_start = time.time()
     result = get_all_extracted_content(pages_dir=pages_dir, output_dir=elements_dir)
+    result_creation_time = time.time() - result_creation_start
     
     # Generate markdown representation of the document
+    markdown_start = time.time()
     source_fn = os.path.splitext(os.path.basename(pdf_path))[0] if pdf_path else None
     utils.save_document_markdown(result, extract_dir=extract_dir, source_fn=source_fn)
+    markdown_generation_time = time.time() - markdown_start
     
     # Initialize timing variables for new stages
     embeddings_time = 0
     lancedb_time = 0
+    post_processing_time = 0  # Time for saving results to JSON, etc.
+    pre_processing_time = 0  # Minimal pre-processing operations after setup
     
     # Generate embeddings for the markdown content
+    embedding_generation_start = time.time()
     if extract_dir and source_fn:
         markdown_path = os.path.join(extract_dir, f"{source_fn}.md")
         # Generate granular embeddings from result object instead of markdown file
         embedding_results, embeddings_time = utils.generate_embeddings_from_result(result)
         if embedding_results:
             _, lancedb_time = utils.save_to_lancedb(embedding_results, extract_dir=extract_dir, source_fn=source_fn)
+    embedding_generation_time = time.time() - embedding_generation_start
+    
+    # Measure post-processing: saving results to JSON file and other final operations
+    post_processing_start = time.time()
+    from utils import save_extracted_content_to_json
+    save_extracted_content_to_json(result, extract_dir=extract_dir)
+    post_processing_time = time.time() - post_processing_start
+    
+    # Calculate time for other processing operations that weren't timed separately
+    total_time = time.time() - start_time
+    if timing and timing_data:  # Only calculate these if timing is enabled and timing_data exists
+        accounted_time = setup_time + import_time + rate_limit_time + pdf_extraction_time + ai_processing_time_total + result_creation_time + markdown_generation_time + embedding_generation_time + lancedb_time + post_processing_time
+        remaining_processing_time = max(0, total_time - accounted_time)  # Remaining unaccounted time
+    else:
+        remaining_processing_time = 0
     
     # Generate final comprehensive timing summary at the end
-    if timing and 'timing_data' in locals() and timing_data:
+    if timing and timing_data:
         total_time = time.time() - start_time
         # Calculate percentages
+        setup_pct = (setup_time / total_time) * 100 if total_time > 0 else 0
+        import_pct = (import_time / total_time) * 100 if total_time > 0 else 0
+        rate_limit_pct = (rate_limit_time / total_time) * 100 if total_time > 0 else 0
         pdf_extraction_pct = (pdf_extraction_time / total_time) * 100 if total_time > 0 else 0
-        page_elements_pct = (page_elements_time / total_time) * 100 if total_time > 0 else 0
-        table_structure_pct = (table_structure_time / total_time) * 100 if total_time > 0 else 0
-        chart_structure_pct = (chart_structure_time / total_time) * 100 if total_time > 0 else 0
-        ocr_pct = (ocr_time / total_time) * 100 if total_time > 0 else 0
-        embeddings_pct = (embeddings_time / total_time) * 100 if total_time > 0 else 0
+        ai_processing_pct = (ai_processing_time_total / total_time) * 100 if total_time > 0 else 0  # Total AI processing time
+        result_creation_pct = (result_creation_time / total_time) * 100 if total_time > 0 else 0
+        markdown_generation_pct = (markdown_generation_time / total_time) * 100 if total_time > 0 else 0
+        embedding_generation_pct = (embedding_generation_time / total_time) * 100 if total_time > 0 else 0
         lancedb_pct = (lancedb_time / total_time) * 100 if total_time > 0 else 0
+        post_processing_pct = (post_processing_time / total_time) * 100 if total_time > 0 else 0
+        remaining_processing_pct = (remaining_processing_time / total_time) * 100 if total_time > 0 else 0
         
         # Get OCR task counts for breakdown
         ocr_task_counts = timing_data.get('ocr_task_counts', {'table_cells': 0, 'chart_elements': 0, 'titles': 0})
@@ -385,37 +305,37 @@ def extract(pdf_path="data/multimodal_test.pdf", output_dir="page_elements", ext
         
         log(f"""
 Timing Summary:
+Setup & Directory Creation: {setup_time:.2f}s ({setup_pct:.1f}%)
+Module Import: {import_time:.2f}s ({import_pct:.1f}%)
+Rate Limit Configuration: {rate_limit_time:.2f}s ({rate_limit_pct:.1f}%)
 PDF Extraction: {pdf_extraction_time:.2f}s ({pdf_extraction_pct:.1f}%)
-Page Elements Inference: {page_elements_time:.2f}s ({page_elements_pct:.1f}%)
-Table Structure: {table_structure_time:.2f}s ({table_structure_pct:.1f}%)
-Chart Structure: {chart_structure_time:.2f}s ({chart_structure_pct:.1f}%)
+AI Processing (Elements, Structure, OCR): {ai_processing_time_total:.2f}s ({ai_processing_pct:.1f}%)
         """, level="ALWAYS")
         
-        # OCR with content type breakdown
-        if total_ocr_tasks > 0:
-            log(f"  OCR: {ocr_time:.2f}s ({ocr_pct:.1f}%) - breakdown:", level="ALWAYS")
-            if ocr_task_counts['titles'] > 0:
+        # OCR with content type breakdown (if we have OCR timing data from AI processing)
+        if timing_data and 'ocr_task_counts' in timing_data:
+            ocr_task_counts = timing_data.get('ocr_task_counts', {'table_cells': 0, 'chart_elements': 0, 'titles': 0})
+            total_ocr_tasks = ocr_task_counts['table_cells'] + ocr_task_counts['chart_elements'] + ocr_task_counts['titles']
+            if total_ocr_tasks > 0:
                 title_pct = (ocr_task_counts['titles'] / total_ocr_tasks) * 100
-                log(f"    Titles: {ocr_task_counts['titles']} tasks ({title_pct:.1f}%)", level="ALWAYS")
-            if ocr_task_counts['table_cells'] > 0:
                 cell_pct = (ocr_task_counts['table_cells'] / total_ocr_tasks) * 100
-                log(f"    Table Cells: {ocr_task_counts['table_cells']} tasks ({cell_pct:.1f}%)", level="ALWAYS")
-            if ocr_task_counts['chart_elements'] > 0:
                 chart_pct = (ocr_task_counts['chart_elements'] / total_ocr_tasks) * 100
-                log(f"    Chart Elements: {ocr_task_counts['chart_elements']} tasks ({chart_pct:.1f}%)", level="ALWAYS")
-        else:
-            log(f"  OCR: {ocr_time:.2f}s ({ocr_pct:.1f}%)", level="ALWAYS")
+                log(f"""
+OCR Breakdown:
+  Titles: {ocr_task_counts['titles']} tasks ({title_pct:.1f}%)
+  Table Cells: {ocr_task_counts['table_cells']} tasks ({cell_pct:.1f}%)
+  Chart Elements: {ocr_task_counts['chart_elements']} tasks ({chart_pct:.1f}%)
+                """, level="ALWAYS")
             
         log(f"""
-Embedding Generation: {embeddings_time:.2f}s ({embeddings_pct:.1f}%)
+Result Creation: {result_creation_time:.2f}s ({result_creation_pct:.1f}%)
+Markdown Generation: {markdown_generation_time:.2f}s ({markdown_generation_pct:.1f}%)
+Embedding Generation: {embedding_generation_time:.2f}s ({embedding_generation_pct:.1f}%)
 LanceDB Indexing: {lancedb_time:.2f}s ({lancedb_pct:.1f}%)
+Post-Processing: {post_processing_time:.2f}s ({post_processing_pct:.1f}%)
+Unaccounted/Overhead: {remaining_processing_time:.2f}s ({remaining_processing_pct:.1f}%)
 Total: {total_time:.2f}s
         """, level="ALWAYS")
-        
-    elif timing:
-        # Fallback for when timing is disabled
-        total_time = time.time() - start_time
-        log(f"Overall processing completed in {total_time:.2f} seconds", level="ALWAYS")
 
     return result
 
@@ -528,7 +448,7 @@ def get_text_stats(output_dir="page_elements"):
     }
 
 
-def print_content_summary(output_dir="page_elements"):
+def content_summary(output_dir="page_elements"):
     """
     Print a summary of content counts and text statistics.
     
@@ -562,9 +482,8 @@ def print_content_summary(output_dir="page_elements"):
     content_str = ", ".join([f"{content_type}s: {count}" for content_type, count in sorted_content_types])
     # Get text statistics
     text_stats = get_text_stats(output_dir)
-    log(f"{content_str} | Total elements: {total_elements}, Words: {text_stats['text_stats']['words']}, Characters: {text_stats['text_stats']['chars']}, Lines: {text_stats['text_stats']['lines']}", level="ALWAYS")
+    return f"{content_str} | Total elements: {total_elements}, Words: {text_stats['text_stats']['words']}, Characters: {text_stats['text_stats']['chars']}, Lines: {text_stats['text_stats']['lines']}"
     
-
 if __name__ == "__main__":
     import sys
     
@@ -579,331 +498,27 @@ if __name__ == "__main__":
     requests_per_minute = 40  # Default: 40 requests per minute
     max_workers = None  # Default: system CPU count
     
-    # Check command line arguments
-    if len(sys.argv) > 1:
-        arg1 = sys.argv[1]
-        if isdir(arg1):
-            # It's a directory - process all PDFs in this directory
-            target_path = arg1
-        elif arg1.endswith('.pdf') and ('/' in arg1 or '\\' in arg1):
-            # It's a PDF file path
-            target_path = arg1
-            if len(sys.argv) > 2:
-                try:
-                    pages_per_process = int(sys.argv[2])
-                    if len(sys.argv) > 3:
-                        try:
-                            max_processes = int(sys.argv[3])
-                            if len(sys.argv) > 4:
-                                try:
-                                    max_concurrent_requests = int(sys.argv[4])
-                                    if len(sys.argv) > 5:
-                                        try:
-                                            requests_per_minute = int(sys.argv[5])
-                                            if len(sys.argv) > 6:
-                                                try:
-                                                    max_workers = int(sys.argv[6])
-                                                except ValueError:
-                                                    print(f"Invalid value for max_workers: {sys.argv[6]}. Using default value.")
-                                        except ValueError:
-                                            print(f"Invalid value for requests_per_minute: {sys.argv[5]}. Using default value.")
-                                except ValueError:
-                                    print(f"Invalid value for max_concurrent_requests: {sys.argv[4]}. Using default value.")
-                        except ValueError:
-                            print(f"Invalid value for max_processes: {sys.argv[3]}. Using default value.")
-                except ValueError:
-                    print(f"Invalid value for pages_per_process: {sys.argv[2]}. Using default value of 1.")
-        else:
-            # It could be pages_per_process, max_processes, max_concurrent_requests, or requests_per_minute
-            try:
-                first_num = int(arg1)
-                
-                # Second argument could be any of the numeric parameters
-                if len(sys.argv) > 2:
-                    try:
-                        second_num = int(sys.argv[2])
-                        
-                        # Third argument could be another numeric parameter or path
-                        if len(sys.argv) > 3:
-                            try:
-                                third_num = int(sys.argv[3])
-                                
-                                # Fourth argument could be yet another numeric parameter or path
-                                if len(sys.argv) > 4:
-                                    try:
-                                        fourth_num = int(sys.argv[4])
-                                        
-                                        # Fifth argument could be the final numeric parameter or path
-                                        if len(sys.argv) > 5:
-                                            try:
-                                                fifth_num = int(sys.argv[5])
-                                                # All 5 numeric values provided, sixth might be path
-                                                pages_per_process = first_num
-                                                max_processes = second_num
-                                                max_concurrent_requests = third_num
-                                                requests_per_minute = fourth_num
-                                                max_workers = fifth_num
-                                                
-                                                if len(sys.argv) > 6:
-                                                    arg6 = sys.argv[6]
-                                                    if isdir(arg6):
-                                                        target_path = arg6
-                                                    elif arg6.endswith('.pdf') and ('/' in arg6 or '\\' in arg6):
-                                                        target_path = arg6
-                                            except ValueError:
-                                                # Fifth is not a number, so it's a path
-                                                pages_per_process = first_num
-                                                max_processes = second_num
-                                                max_concurrent_requests = third_num
-                                                requests_per_minute = fourth_num
-                                                arg5 = sys.argv[5]
-                                                if isdir(arg5):
-                                                    target_path = arg5
-                                                elif arg5.endswith('.pdf') and ('/' in arg5 or '\\' in arg5):
-                                                    target_path = arg5
-                                                else:
-                                                    print(f"Invalid path: {arg5}. Expected directory or PDF file path.")
-                                                    sys.exit(1)
-                                        else:
-                                            # Only 4 numeric values provided
-                                            pages_per_process = first_num
-                                            max_processes = second_num
-                                            max_concurrent_requests = third_num
-                                            requests_per_minute = fourth_num
-                                    except ValueError:
-                                        # Fourth is not a number, so it's a path
-                                        pages_per_process = first_num
-                                        max_processes = second_num
-                                        max_concurrent_requests = third_num
-                                        arg4 = sys.argv[4]
-                                        if isdir(arg4):
-                                            target_path = arg4
-                                        elif arg4.endswith('.pdf') and ('/' in arg4 or '\\' in arg4):
-                                            target_path = arg4
-                                        else:
-                                            print(f"Invalid path: {arg4}. Expected directory or PDF file path.")
-                                            sys.exit(1)
-                                else:
-                                    # Only 3 numeric values provided
-                                    pages_per_process = first_num
-                                    max_processes = second_num
-                                    max_concurrent_requests = third_num
-                            except ValueError:
-                                # Third is not a number, so it's a path
-                                pages_per_process = first_num
-                                max_processes = second_num
-                                arg3 = sys.argv[3]
-                                if isdir(arg3):
-                                    target_path = arg3
-                                elif arg3.endswith('.pdf') and ('/' in arg3 or '\\' in arg3):
-                                    target_path = arg3
-                                else:
-                                    print(f"Invalid path: {arg3}. Expected directory or PDF file path.")
-                                    sys.exit(1)
-                        else:
-                            # Only 2 numeric values provided
-                            pages_per_process = first_num
-                            max_processes = second_num
-                    except ValueError:
-                        # Second argument is not a number, so first is pages_per_process
-                        pages_per_process = first_num
-                        arg2 = sys.argv[2]
-                        if isdir(arg2):
-                            # Directory path
-                            target_path = arg2
-                        elif arg2.endswith('.pdf') and ('/' in arg2 or '\\' in arg2):
-                            # PDF file path
-                            target_path = arg2
-                        else:
-                            print(f"Invalid path: {arg2}. Expected directory or PDF file path.")
-                            sys.exit(1)
-                else:
-                    # Only one numeric argument provided - assume it's pages_per_process with default PDF
-                    pages_per_process = first_num
-            except ValueError:
-                print(f"Invalid argument: {arg1}. Expected directory, PDF file path, or numeric value.")
-                sys.exit(1)
+    log(f"Processing {target_path} with {pages_per_process} pages per process")
     
-    # Check if target_path is a directory
-    if os.path.isdir(target_path):
-        print(f"Processing all PDFs in directory: {target_path}")
-        pdf_files = glob(os.path.join(target_path, "*.pdf"))
-        
-        if not pdf_files:
-            print(f"No PDF files found in directory: {target_path}")
-            sys.exit(1)
-        
-        print(f"Found {len(pdf_files)} PDF files to process: {pdf_files}")
-        
-        # Two-phase processing for multiple files:
-        # Phase 1: PDF extraction (text and images) for ALL files first
-        import time
-        # Track total processing time and pages
-        total_start_time = time.time()
-        total_pages_processed = 0
-        
-        print("\nStarting Phase 1: PDF extraction for all files...")
-        extraction_results = []
-        
-        for i, pdf_file in enumerate(pdf_files):
-            print(f"\nPDF extraction {i+1}/{len(pdf_files)}: {pdf_file}")
-            
-            # Create a unique extract directory for each PDF following the new structure
-            pdf_name = os.path.splitext(os.path.basename(pdf_file))[0]
-            extract_dir = os.path.join("extracts", pdf_name)
-            
-            # Do just the PDF extraction part (text and images)
-            import shutil
-            import utils
-            
-            # Generate default extract_dir based on the source PDF filename
-            source_fn = os.path.splitext(os.path.basename(pdf_file))[0]  # Get filename without extension
-            extract_dir = os.path.join("extracts", source_fn)
-
-            # Create extract directory and clean it if it already exists
-            if os.path.exists(extract_dir):
-                shutil.rmtree(extract_dir)
-            os.makedirs(extract_dir, exist_ok=True)
-
-            # Set up paths relative to extract directory
-            pages_dir = os.path.join(extract_dir, "pages")
-            texts_dir = os.path.join(extract_dir, "texts")
-            elements_dir = os.path.join(extract_dir, "page_elements")  # Default output_dir
-
-            # Create subdirectories in extract directory
-            os.makedirs(pages_dir, exist_ok=True)
-            os.makedirs(texts_dir, exist_ok=True)
-
-            # Extract text and images from PDF (the CPU-intensive part)
-            pdf_extraction_time = process_pdf_with_paths(pdf_path=pdf_file, texts_dir=texts_dir, pages_dir=pages_dir, pages_per_process=pages_per_process, max_processes=max_processes)
-            
-            # Store extraction results for phase 2
-            extraction_results.append({
-                'pdf_file': pdf_file,
-                'extract_dir': extract_dir,
-                'pages_dir': pages_dir,
-                'texts_dir': texts_dir,
-                'elements_dir': elements_dir,
-                'pdf_extraction_time': pdf_extraction_time
-            })
-            
-            print(f"Completed PDF extraction for {pdf_file}")
-        
-        print(f"\nPhase 1 completed: PDF extraction for all {len(pdf_files)} files done.")
-        
-        # Phase 2: AI processing for all files
-        print("\nStarting Phase 2: AI processing (element detection, OCR, etc.) for all files...")
-        
-        for i, extraction_result in enumerate(extraction_results):
-            pdf_file = extraction_result['pdf_file']
-            extract_dir = extraction_result['extract_dir']
-            pages_dir = extraction_result['pages_dir']
-            elements_dir = extraction_result['elements_dir']
-            pdf_extraction_time = extraction_result['pdf_extraction_time']
-            
-            print(f"\nAI processing {i+1}/{len(extraction_results)}: {pdf_file}")
-            
-            # Configure API rate limiting before processing
-            utils.configure_api_rate_limit(max_concurrent_requests, requests_per_minute, max_workers)
-            
-            # Process page images to extract content elements with structure and OCR
-            ai_start_time = time.time()
-            utils.process_page_images(
-                pages_dir=pages_dir, 
-                output_dir=elements_dir, 
-                timing=True, 
-                ocr_titles=True, 
-                batch_processing=True, 
-                batch_size=25, 
-                pdf_extraction_time=pdf_extraction_time
-            )
-            ai_processing_time = time.time() - ai_start_time
-
-            # Create consolidated result object
-            result = get_all_extracted_content(pages_dir=pages_dir, output_dir=elements_dir)
-            # Count pages in this document for total tracking
-            pages_in_current_doc = len(result.get('pages', {}))
-            total_pages_processed += pages_in_current_doc
-            
-
-            # Generate markdown representation of the document
-            source_fn = os.path.splitext(os.path.basename(pdf_file))[0] if pdf_file else None
-            utils.save_document_markdown(result, extract_dir=extract_dir, source_fn=source_fn)
-
-            # Initialize timing variables for new stages
-            embeddings_time = 0
-            lancedb_time = 0
-
-            # Generate embeddings for the markdown content
-            if extract_dir and source_fn:
-                markdown_path = os.path.join(extract_dir, f"{source_fn}.md")
-                # Generate granular embeddings from result object instead of markdown file
-                embedding_results, embeddings_time = utils.generate_embeddings_from_result(result)
-                if embedding_results:
-                    utils.save_embeddings_to_json(embedding_results, extract_dir=extract_dir, source_fn=source_fn)
-                    
-                    # Save embeddings to LanceDB for queryable storage
-                    _, lancedb_time = utils.save_to_lancedb(embedding_results, extract_dir=extract_dir, source_fn=source_fn)
-
-            # Report timing if needed
-            total_time = time.time() - (time.time() - ai_start_time - pdf_extraction_time)  # Approximate
-            print(f"Overall processing completed for {pdf_file} in unknown seconds (extraction: {pdf_extraction_time:.2f}s, AI: {ai_processing_time:.2f}s)")
-            print(f"Breakdown for {pdf_file}:")
-            print(f"  PDF Extraction: {pdf_extraction_time:.2f}s")
-            print(f"  AI Processing (Elements, Structure, OCR): {ai_processing_time:.2f}s")
-            print(f"  Embedding Generation: {embeddings_time:.2f}s")
-            print(f"  LanceDB Indexing: {lancedb_time:.2f}s")
-
-            # Print content summary for each PDF
-            print(f"\nContent summary for {pdf_file}:")
-            print("="*50)
-            print_content_summary(f"{extract_dir}/page_elements")
-            
-            # Print detailed content statistics
-            from utils import get_content_counts_with_text_stats
-            content_counts = get_content_counts_with_text_stats(f"{extract_dir}/page_elements")
-            
-            # Save the result to a JSON file in the extraction directory
-            from utils import save_extracted_content_to_json
-            save_extracted_content_to_json(result, extract_dir=extract_dir)
-            
-            print(f"\nProcessing completed for {pdf_file}! Total elements found: {content_counts['total_elements']}")
-        
-        print(f"\nCompleted processing all {len(pdf_files)} PDF files in {target_path}")
-        
-        # Print total runtime and page count summary
-        total_runtime = time.time() - total_start_time
-        log(f"""
-SUMMARY:
-Total Runtime: {total_runtime:.2f} seconds ({total_runtime/60:.2f} minutes)")
-Total Pages Processed: {total_pages_processed}")
-Average Pages per Second: {total_pages_processed/total_runtime:.2f}" if total_runtime > 0 else "N/A"
-        """, level="ALWAYS")
-        
-        
-    else:
-        log(f"Processing {target_path} with {pages_per_process} pages per process")
-        
-        # Example usage - single PDF file
-        # When no extract_dir is specified, the extract function will use the default "extracts/{source_fn}" structure
-        result = extract(pdf_path=target_path, timing=True, pages_per_process=pages_per_process, max_processes=max_processes, max_concurrent_requests=max_concurrent_requests, requests_per_minute=requests_per_minute, max_workers=max_workers)
-        
-        # The output will automatically be in the "extracts/{source_fn}" directory
-        source_fn = os.path.splitext(os.path.basename(target_path))[0]
-        output_dir = os.path.join("extracts", source_fn)
-        
-        print_content_summary(f"{output_dir}/page_elements")
-        
-        # Print detailed content statistics
-        from utils import get_content_counts_with_text_stats
-        content_counts = get_content_counts_with_text_stats(f"{output_dir}/page_elements")
-        
-        print("Per-Page Breakdown:")
-        # Sort pages in ascending order (e.g., page_001, page_002, page_003)
-        for page_name, page_stats in sorted(content_counts['pages'].items()):
-            content_str = ", ".join([f"{content_type}s: {count}" for content_type, count in page_stats['content_types'].items()])
-            print(f"  {page_name}: {content_str} | Words: {page_stats['text_stats']['words']}, Characters: {page_stats['text_stats']['chars']}, Lines: {page_stats['text_stats']['lines']}")
-        
-        # Save the result to a JSON file in the extraction directory
-        from utils import save_extracted_content_to_json
-        save_extracted_content_to_json(result, extract_dir=output_dir)
+    # Example usage - single PDF file
+    # When no extract_dir is specified, the extract function will use the default "extracts/{source_fn}" structure
+    result = extract(pdf_path=target_path, timing=True, pages_per_process=pages_per_process, max_processes=max_processes, max_concurrent_requests=max_concurrent_requests, requests_per_minute=requests_per_minute, max_workers=max_workers)
+    
+    # The output will automatically be in the "extracts/{source_fn}" directory
+    source_fn = os.path.splitext(os.path.basename(target_path))[0]
+    output_dir = os.path.join("extracts", source_fn)
+    
+    log(content_summary(f"{output_dir}/page_elements"), level="ALWAYS")
+    
+    # Print detailed content statistics
+    from utils import get_content_counts_with_text_stats
+    content_counts = get_content_counts_with_text_stats(f"{output_dir}/page_elements")
+    
+    # Sort pages in ascending order (e.g., page_001, page_002, page_003)
+    for page_name, page_stats in sorted(content_counts['pages'].items()):
+        content_str = ", ".join([f"{content_type}s: {count}" for content_type, count in page_stats['content_types'].items()])
+        log(f"{page_name}: {content_str} | Words: {page_stats['text_stats']['words']}, Characters: {page_stats['text_stats']['chars']}, Lines: {page_stats['text_stats']['lines']}", level="ALWAYS")
+    
+    # Save the result to a JSON file in the extraction directory
+    from utils import save_extracted_content_to_json
+    save_extracted_content_to_json(result, extract_dir=output_dir)
