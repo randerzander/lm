@@ -2595,100 +2595,6 @@ def save_document_markdown(result_obj, extract_dir=None, source_fn=None):
     log(f"Document markdown saved to {output_path}")
 
 
-def generate_embeddings_for_markdown(markdown_file_path, api_key=None):
-    """
-    Generate embeddings for a markdown file, splitting content by page boundaries.
-    Each page becomes a separate embedding chunk.
-
-    Args:
-        markdown_file_path (str): Path to the markdown file to process
-        api_key (str): API key for NVIDIA embedding service. If not provided, 
-                      will try to get from environment variable NVIDIA_API_KEY
-
-    Returns:
-        tuple: A tuple containing (results list, total time in seconds)
-    """
-    import os
-    from openai import OpenAI
-    import time
-    
-    start_time = time.time()
-    
-    # Set up API key
-    if api_key is None:
-        api_key = os.getenv("NVIDIA_API_KEY")
-        if not api_key:
-            print("NVIDIA_API_KEY environment variable not set. Skipping embeddings generation.")
-            return [], 0.0
-    
-    # Initialize the client
-    client = OpenAI(
-        api_key=api_key,
-        base_url="https://integrate.api.nvidia.com/v1"
-    )
-
-    # Read the markdown file
-    with open(markdown_file_path, 'r', encoding='utf-8') as f:
-        content = f.read()
-
-    # Split content by page separators (--- followed by a newline, which was added in save_document_markdown)
-    sections = content.split('---\n')
-    
-    # Filter out empty sections and header sections
-    filtered_sections = []
-    for i, section in enumerate(sections):
-        section = section.strip()
-        if not section:
-            continue
-        # Skip the header sections if they're not actual page content
-        # Only skip sections that are purely document headers without page content
-        if section.startswith('# ') and ('## Page' not in section):
-            # This is likely just document headers without actual page content
-            continue
-        filtered_sections.append((i, section))
-    
-    # Use the new embedding batching function
-    results = _make_embedding_batch_request(
-        filtered_sections,
-        client,
-        batch_size=25,  # Reasonable batch size to stay within API limits
-        api_description="embeddings"
-    )
-    
-    total_time = time.time() - start_time
-    print(f"Embedding generation completed in {total_time:.2f} seconds")
-    
-    return results, total_time
-
-
-def save_embeddings_to_json(embedding_results, extract_dir=None, source_fn=None):
-    """
-    Save embedding results to a JSON file in the extracts directory.
-
-    Args:
-        embedding_results (list): List of embedding results from generate_embeddings_for_markdown
-        extract_dir (str): Directory to save the embeddings file. If None, uses default pattern
-        source_fn (str): Source filename without extension for naming the embeddings file
-    """
-    import json
-    import os
-    
-    # Determine output path
-    if extract_dir and source_fn:
-        output_path = os.path.join(extract_dir, f"{source_fn}_embeddings.json")
-    elif extract_dir:
-        # If extract_dir is provided but source_fn isn't, use a default name
-        output_path = os.path.join(extract_dir, "document_embeddings.json")
-    else:
-        # If no extract_dir provided, save in current directory
-        output_path = f"{source_fn or 'document'}_embeddings.json"
-    
-    # Write to file
-    with open(output_path, 'w', encoding='utf-8') as f:
-        json.dump(embedding_results, f, indent=2)
-    
-    log(f"Embeddings saved to {output_path}")
-
 
 def save_to_lancedb(embedding_results, extract_dir=None, source_fn=None):
     """
@@ -2706,77 +2612,67 @@ def save_to_lancedb(embedding_results, extract_dir=None, source_fn=None):
     
     start_time = time.time()
     
-    try:
-        # Use a single database in the project root for all documents
-        db_path = "./lancedb"
-        
-        # Connect to LanceDB
-        db = lancedb.connect(db_path)
-        
-        # Prepare data for insertion
-        # Only include results that have successful embeddings
-        valid_results = [r for r in embedding_results if r.get('embedding') is not None]
-        
-        if not valid_results:
-            print("No valid embeddings to store in LanceDB")
-            indexing_time = time.time() - start_time
-            return None, indexing_time
-        
-        # Create schema for the table
-        # Using PyArrow schema to define table structure
-        schema = pa.schema([
-            pa.field("page_number", pa.string()),          # Page number where content was located
-            pa.field("content", pa.string()),
-            pa.field("embedding", pa.list_(pa.float32())),  # Embedding vector
-            pa.field("source_document", pa.string()),      # Name of the source document
-            pa.field("page_content_length", pa.int32()),   # Length of content for metadata
-            pa.field("content_type", pa.string())          # Type of content (page_text, chart, table, etc.)
-        ])
-        
-        # Prepare data for insertion
-        data = []
-        for result in valid_results:
-            typ = result.get("element_type", "unknown")
-            cont = result["content"]
-            #print(f"{typ} {cont[0:10]}..., len: {len(cont)}")
-            data.append({
-                "page_number": result.get("page_number", "unknown"),  # Use actual page number where content was located
-                "content": result["content"],
-                "embedding": result["embedding"],
-                "source_document": source_fn or "unknown",
-                "page_content_length": len(result["content"]),
-                "content_type": result.get("element_type", "unknown")  # Use element_type from result metadata
-            })
-        
-        # Convert to PyArrow table
-        table_data = pa.Table.from_pylist(data, schema=schema)
-        
-        # Use a single table for all documents
-        table_name = "all_documents"
-        
-        if table_name in db.table_names():
-            # If table exists, open it and add the new data
-            table = db.open_table(table_name)
-            table.add(table_data)
-        else:
-            # Create new table
-            table = db.create_table(table_name, table_data)
-        
-        indexing_time = time.time() - start_time
-        log(f"Successfully saved {len(valid_results)} embeddings to LanceDB table '{table_name}' in {db_path}")
-        log(f"LanceDB table has {table.count_rows()} total rows")
-        log(f"LanceDB indexing completed in {indexing_time:.2f} seconds", level="ALWAYS")
-        
-        return table_name, indexing_time
-        
-    except ImportError:
-        print("LanceDB not installed. Install with: pip install lancedb")
+    # Use a single database in the project root for all documents
+    db_path = "./lancedb"
+    
+    # Connect to LanceDB
+    db = lancedb.connect(db_path)
+    
+    # Prepare data for insertion
+    # Only include results that have successful embeddings
+    valid_results = [r for r in embedding_results if r.get('embedding') is not None]
+    
+    if not valid_results:
+        print("No valid embeddings to store in LanceDB")
         indexing_time = time.time() - start_time
         return None, indexing_time
-    except Exception as e:
-        print(f"Error saving to LanceDB: {str(e)}")
-        indexing_time = time.time() - start_time
-        return None, indexing_time
+    
+    # Create schema for the table
+    # Using PyArrow schema to define table structure
+    schema = pa.schema([
+        pa.field("page_number", pa.string()),          # Page number where content was located
+        pa.field("content", pa.string()),
+        pa.field("embedding", pa.list_(pa.float32())),  # Embedding vector
+        pa.field("source_document", pa.string()),      # Name of the source document
+        pa.field("page_content_length", pa.int32()),   # Length of content for metadata
+        pa.field("content_type", pa.string())          # Type of content (page_text, chart, table, etc.)
+    ])
+    
+    # Prepare data for insertion
+    data = []
+    for result in valid_results:
+        typ = result.get("element_type", "unknown")
+        cont = result["content"]
+        #print(f"{typ} {cont[0:10]}..., len: {len(cont)}")
+        data.append({
+            "page_number": result.get("page_number", "unknown"),  # Use actual page number where content was located
+            "content": result["content"],
+            "embedding": result["embedding"],
+            "source_document": source_fn or "unknown",
+            "page_content_length": len(result["content"]),
+            "content_type": result.get("element_type", "unknown")  # Use element_type from result metadata
+        })
+    
+    # Convert to PyArrow table
+    table_data = pa.Table.from_pylist(data, schema=schema)
+    
+    # Use a single table for all documents
+    table_name = "all_documents"
+    
+    if table_name in db.table_names():
+        # If table exists, open it and add the new data
+        table = db.open_table(table_name)
+        table.add(table_data)
+    else:
+        # Create new table
+        table = db.create_table(table_name, table_data)
+    
+    indexing_time = time.time() - start_time
+    log(f"Successfully saved {len(valid_results)} embeddings to LanceDB table '{table_name}' in {db_path}")
+    log(f"LanceDB table has {table.count_rows()} total rows")
+    log(f"LanceDB indexing completed in {indexing_time:.2f} seconds", level="ALWAYS")
+    
+    return table_name, indexing_time
 
 def generate_embeddings_from_result(result_obj, api_key=None):
     """
@@ -2798,16 +2694,9 @@ def generate_embeddings_from_result(result_obj, api_key=None):
     
     start_time = time.time()
     
-    # Set up API key
-    if api_key is None:
-        api_key = os.getenv("NVIDIA_API_KEY")
-        if not api_key:
-            print("NVIDIA_API_KEY environment variable not set. Skipping embeddings generation.")
-            return [], 0.0
-    
     # Initialize the client
     client = OpenAI(
-        api_key=api_key,
+        api_key=os.environ["NVIDIA_API_KEY"],
         base_url="https://integrate.api.nvidia.com/v1"
     )
 
@@ -2948,28 +2837,5 @@ def generate_embeddings_from_result(result_obj, api_key=None):
             result['page_number'] = page_number  # Use actual page number where content was located
             result['content'] = chunk['content']  # Ensure content is set
     
-    # Provide a summary of generated embeddings by type
-    if embedding_results:
-        page_text_count = sum(1 for r in embedding_results if r.get('element_type') == 'page_text')
-        table_count = sum(1 for r in embedding_results if r.get('element_type') == 'table')
-        chart_count = sum(1 for r in embedding_results if r.get('element_type') == 'chart')
-        other_count = len(embedding_results) - page_text_count - table_count - chart_count
-        
-        summary_parts = []
-        if page_text_count > 0:
-            summary_parts.append(str(page_text_count) + ' page texts')
-        if table_count > 0:
-            summary_parts.append(str(table_count) + ' tables')
-        if chart_count > 0:
-            summary_parts.append(str(chart_count) + ' charts')
-        if other_count > 0:
-            summary_parts.append(str(other_count) + ' other elements')
-        
-        summary_str = ', '.join(summary_parts)
-        total_time = time.time() - start_time
-        log('Embeddings completed: ' + str(len(embedding_results)) + ' chunks (' + summary_str + ') in ' + str(round(total_time, 2)) + 's', level="ALWAYS")
-    else:
-        total_time = time.time() - start_time
-        print('Granular embedding generation completed in ' + str(round(total_time, 2)) + ' seconds (no embeddings generated)')
-    
+    total_time = time.time() - start_time
     return embedding_results, total_time

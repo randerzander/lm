@@ -265,9 +265,11 @@ def extract(pdf_path="data/multimodal_test.pdf", output_dir="page_elements", ext
         markdown_path = os.path.join(extract_dir, f"{source_fn}.md")
         # Generate granular embeddings from result object instead of markdown file
         embedding_results, embeddings_time = utils.generate_embeddings_from_result(result)
-        if embedding_results:
-            _, lancedb_time = utils.save_to_lancedb(embedding_results, extract_dir=extract_dir, source_fn=source_fn)
-    embedding_generation_time = time.time() - embedding_generation_start
+        embedding_generation_time = time.time() - embedding_generation_start
+        t0 = time.time()
+        _, lancedb_time = utils.save_to_lancedb(embedding_results, extract_dir=extract_dir, source_fn=source_fn)
+        t1 = time.time()
+        lancedb_time = t1 - t0
     
     # Measure post-processing: saving results to JSON file and other final operations
     post_processing_start = time.time()
