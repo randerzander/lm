@@ -920,307 +920,152 @@ def process_page_images(pages_dir="pages", output_dir="page_elements", timing=Fa
     # Process all page images
     page_images = glob(os.path.join(pages_dir, "*.jpg")) + glob(os.path.join(pages_dir, "*.png"))
     
-    if batch_processing:
-        log(f"Processing {len(page_images)} page images using batch processing...", level="ALWAYS")
+    log(f"Processing {len(page_images)} page images using batch processing...", level="ALWAYS")
+    
+    # Process page images in batches for page element detection
+    for i in range(0, len(page_images), batch_size):
+        batch_paths = page_images[i:i + batch_size]
+        # print(f"DEBUG: Processing batch {i//batch_size + 1} with {len(batch_paths)} images: {batch_paths[:2]}{'...' if len(batch_paths) > 2 else ''}")  # Show first 2 paths for debugging
         
-        # Process page images in batches for page element detection
-        for i in range(0, len(page_images), batch_size):
-            batch_paths = page_images[i:i + batch_size]
-            # print(f"DEBUG: Processing batch {i//batch_size + 1} with {len(batch_paths)} images: {batch_paths[:2]}{'...' if len(batch_paths) > 2 else ''}")  # Show first 2 paths for debugging
+        if timing:
+            start_time = time.time()
+        try:
+            # Use smart batching that considers both element count and total payload size
+            smart_batch_size = calculate_smart_batch_size(batch_paths, max_batch_size=batch_size, max_total_payload_size=2_000_000)  # 2MB limit
+            batch_results = extract_bounding_boxes_batch(batch_paths, api_key, smart_batch_size)
             
             if timing:
-                start_time = time.time()
-            try:
-                # Use smart batching that considers both element count and total payload size
-                smart_batch_size = calculate_smart_batch_size(batch_paths, max_batch_size=batch_size, max_total_payload_size=2_000_000)  # 2MB limit
-                batch_results = extract_bounding_boxes_batch(batch_paths, api_key, smart_batch_size)
-                
-                if timing:
-                    page_elements_time += time.time() - start_time
-                
-                # DEBUG: Add diagnostic information for batch processing
-                # print(f"DEBUG: Batch results received - len(batch_results)={len(batch_results)}, batch_paths_count={len(batch_paths)}")
-                
-                # DEBUG: Inspect what batch_results contains
-                # if len(batch_results) > 0:
-                #     print(f"DEBUG: First batch_result type: {type(batch_results[0])}")
-                #     if isinstance(batch_results[0], dict) and 'data' in batch_results[0]:
-                #         print(f"DEBUG: First batch_result data keys: {list(batch_results[0]['data'].keys()) if isinstance(batch_results[0]['data'], dict) else type(batch_results[0]['data'])}")
-                #     elif hasattr(batch_results[0], '__iter__') and not isinstance(batch_results[0], str):
-                #         try:
-                #             print(f"DEBUG: First batch_result is iterable with {len(list(batch_results[0]))} items")
-                #         except:
-                #             print(f"DEBUG: First batch_result is iterable but length unknown")
-                
-                # Process the batch results
-                # FIX: extract_bounding_boxes_batch returns results for the CURRENT batch (single batch),
-                # not a list of all batches processed so far.
-                # So we always take index 0, not i // batch_size
-                if len(batch_results) == 0:
-                    print(f"ERROR: No batch results returned for batch with {len(batch_paths)} images")
-                    raise ValueError(f"No batch results returned for batch with {len(batch_paths)} images")
-                
-                batch_result = batch_results[0]  # Get the result for the current batch
-                # print(f"DEBUG: Successfully retrieved batch_result at index 0 (current batch)")
-                
-                # The API response structure has 'data' field which contains page data for each image in the batch
-                if 'data' in batch_result:
-                    batch_page_data = batch_result['data']
-                    
-                    for img_idx, img_path in enumerate(batch_paths):
-                        # print(f"Processing {img_path}...")  # Commented out to reduce noise
-                        if img_idx < len(batch_page_data):
-                            page_data = batch_page_data[img_idx]
-                        else:
-                            # print(f"No data found in response for {img_path}")  # Commented out to reduce noise
-                            continue
-                        
-
-                        
-                        if 'bounding_boxes' in page_data:
-                            bounding_boxes = page_data['bounding_boxes']
-                            
-                            # Open the original image to crop sub-images
-                            original_image = Image.open(img_path)
-                            img_width, img_height = original_image.size
-                        
-                        # Process each content type (table, chart, title, etc.)
-                        for content_type, elements in bounding_boxes.items():
-                            if elements:  # If there are elements of this type
-                                content_type_dir = os.path.join(output_dir, content_type)
-                                os.makedirs(content_type_dir, exist_ok=True)
-                                
-                                # Create JSONL file for this content type
-                                jsonl_filename = os.path.join(content_type_dir, f"{os.path.basename(img_path).split('.')[0]}_elements.jsonl")
-                                
-                                # Process each element and save sub-image
-                                for idx, element in enumerate(elements):
-                                    # Add content type to the element for clarity
-                                    element_with_type = element.copy()
-                                    element_with_type['type'] = content_type
-                                    element_with_type['image_path'] = img_path
-                                    
-                                    # Calculate pixel coordinates from normalized coordinates
-                                    x_min = int(element['x_min'] * img_width)
-                                    y_min = int(element['y_min'] * img_height)
-                                    x_max = int(element['x_max'] * img_width)
-                                    y_max = int(element['y_max'] * img_height)
-                                    
-                                    # Crop the sub-image based on bounding box
-                                    cropped_image = original_image.crop((x_min, y_min, x_max, y_max))
-                                    
-                                    # Save the cropped image in the content type directory
-                                    image_filename = os.path.join(content_type_dir, f"{os.path.basename(img_path).split('.')[0]}_element_{idx+1}_{content_type}.jpg")
-                                    cropped_image.save(image_filename, "JPEG", quality=90)
-                                    
-                                    # Add the sub-image path to the element data
-                                    element_with_type['sub_image_path'] = image_filename
-                                    
-                                    # If this is a table, track for table structure extraction
-                                    if content_type == 'table':
-                                        # Save the cropped image temporarily for API call
-                                        temp_table_path = image_filename.replace('.jpg', '_for_api.jpg')
-                                        cropped_image.save(temp_table_path, "JPEG", quality=80)
-                                        
-                                        # Add table structure task to be processed in batch later
-                                        table_structure_tasks.append({
-                                            'temp_path': temp_table_path,
-                                            'image_path': image_filename,
-                                            'cropped_image': cropped_image,
-                                            'element_with_type': element_with_type
-                                        })
-                                    
-                                    # If this is a chart, track for graphic elements extraction (to be processed in batches)
-                                    elif content_type == 'chart':
-                                        # Save the cropped image temporarily for API call
-                                        temp_chart_path = image_filename.replace('.jpg', '_for_api.jpg')
-                                        cropped_image.save(temp_chart_path, "JPEG", quality=80)
-                                        
-                                        # Add chart graphic elements task to be processed in batch later
-                                        chart_graphic_elements_tasks.append({
-                                            'temp_path': temp_chart_path,
-                                            'image_path': image_filename,
-                                            'cropped_image': cropped_image,
-                                            'element_with_type': element_with_type
-                                        })
-                                    
-                                    # If this is a title, track the image for OCR if requested
-                                    elif content_type == 'title':
-                                        if ocr_titles:
-                                            # Add title image to OCR tasks to process later in batches
-                                            title_ocr_tasks.append(image_filename)
-                                    
-                                    with open(jsonl_filename, 'a') as f:
-                                        f.write(json.dumps(element_with_type) + '\n')
-                                        
-                        # Close the original image to free memory
-                        original_image.close()
-            except Exception as e:
-                print(f"Error processing page elements batch: {str(e)}")
-                # DEBUG: Add more detailed error information
-                # import traceback
-                # print(f"DEBUG: Full traceback for batch error:")
-                # traceback.print_exc()
-                
-                # If batch processing fails, fall back to individual processing
-                for img_path in batch_paths:
-                    # print(f"Falling back to processing {img_path} individually...")  # Commented out to reduce noise
-                    # We would need to call single image processing here
-                    pass
-    else:
-        # Process page images individually if batch processing is disabled
-        for image_path in sorted(page_images):
-            # print(f"Processing {image_path}...")  # Commented out to reduce noise
+                page_elements_time += time.time() - start_time
             
-            try:
-                # Extract bounding boxes (page elements)
-                if timing:
-                    start_time = time.time()
-                result = extract_bounding_boxes(image_path, api_key)
-                if timing:
-                    page_elements_time += time.time() - start_time
+            # DEBUG: Add diagnostic information for batch processing
+            # print(f"DEBUG: Batch results received - len(batch_results)={len(batch_results)}, batch_paths_count={len(batch_paths)}")
+            
+            # DEBUG: Inspect what batch_results contains
+            # if len(batch_results) > 0:
+            #     print(f"DEBUG: First batch_result type: {type(batch_results[0])}")
+            #     if isinstance(batch_results[0], dict) and 'data' in batch_results[0]:
+            #         print(f"DEBUG: First batch_result data keys: {list(batch_results[0]['data'].keys()) if isinstance(batch_results[0]['data'], dict) else type(batch_results[0]['data'])}")
+            #     elif hasattr(batch_results[0], '__iter__') and not isinstance(batch_results[0], str):
+            #         try:
+            #             print(f"DEBUG: First batch_result is iterable with {len(list(batch_results[0]))} items")
+            #         except:
+            #             print(f"DEBUG: First batch_result is iterable but length unknown")
+            
+            # Process the batch results
+            # FIX: extract_bounding_boxes_batch returns results for the CURRENT batch (single batch),
+            # not a list of all batches processed so far.
+            # So we always take index 0, not i // batch_size
+            if len(batch_results) == 0:
+                print(f"ERROR: No batch results returned for batch with {len(batch_paths)} images")
+                raise ValueError(f"No batch results returned for batch with {len(batch_paths)} images")
+            
+            batch_result = batch_results[0]  # Get the result for the current batch
+            # print(f"DEBUG: Successfully retrieved batch_result at index 0 (current batch)")
+            
+            # The API response structure has 'data' field which contains page data for each image in the batch
+            if 'data' in batch_result:
+                batch_page_data = batch_result['data']
                 
+                for img_idx, img_path in enumerate(batch_paths):
+                    # print(f"Processing {img_path}...")  # Commented out to reduce noise
+                    if img_idx < len(batch_page_data):
+                        page_data = batch_page_data[img_idx]
+                    else:
+                        # print(f"No data found in response for {img_path}")  # Commented out to reduce noise
+                        continue
+                    
 
-                
-                # Process the bounding box data according to the actual API response format
-                if 'data' in result and result['data']:
-                    for page_data in result['data']:  # Each page's data
-                        if 'bounding_boxes' in page_data:
-                            bounding_boxes = page_data['bounding_boxes']
+                    
+                    if 'bounding_boxes' in page_data:
+                        bounding_boxes = page_data['bounding_boxes']
+                        
+                        # Open the original image to crop sub-images
+                        original_image = Image.open(img_path)
+                        img_width, img_height = original_image.size
+                    
+                    # Process each content type (table, chart, title, etc.)
+                    for content_type, elements in bounding_boxes.items():
+                        if elements:  # If there are elements of this type
+                            content_type_dir = os.path.join(output_dir, content_type)
+                            os.makedirs(content_type_dir, exist_ok=True)
                             
-                            # Open the original image to crop sub-images
-                            original_image = Image.open(image_path)
-                            img_width, img_height = original_image.size
+                            # Create JSONL file for this content type
+                            jsonl_filename = os.path.join(content_type_dir, f"{os.path.basename(img_path).split('.')[0]}_elements.jsonl")
                             
-                            # Process each content type (table, chart, title, etc.)
-                            for content_type, elements in bounding_boxes.items():
-                                if elements:  # If there are elements of this type
-                                    content_type_dir = os.path.join(output_dir, content_type)
-                                    os.makedirs(content_type_dir, exist_ok=True)
+                            # Process each element and save sub-image
+                            for idx, element in enumerate(elements):
+                                # Add content type to the element for clarity
+                                element_with_type = element.copy()
+                                element_with_type['type'] = content_type
+                                element_with_type['image_path'] = img_path
+                                
+                                # Calculate pixel coordinates from normalized coordinates
+                                x_min = int(element['x_min'] * img_width)
+                                y_min = int(element['y_min'] * img_height)
+                                x_max = int(element['x_max'] * img_width)
+                                y_max = int(element['y_max'] * img_height)
+                                
+                                # Crop the sub-image based on bounding box
+                                cropped_image = original_image.crop((x_min, y_min, x_max, y_max))
+                                
+                                # Save the cropped image in the content type directory
+                                image_filename = os.path.join(content_type_dir, f"{os.path.basename(img_path).split('.')[0]}_element_{idx+1}_{content_type}.jpg")
+                                cropped_image.save(image_filename, "JPEG", quality=90)
+                                
+                                # Add the sub-image path to the element data
+                                element_with_type['sub_image_path'] = image_filename
+                                
+                                # If this is a table, track for table structure extraction
+                                if content_type == 'table':
+                                    # Save the cropped image temporarily for API call
+                                    temp_table_path = image_filename.replace('.jpg', '_for_api.jpg')
+                                    cropped_image.save(temp_table_path, "JPEG", quality=80)
                                     
-                                    # Create JSONL file for this content type
-                                    jsonl_filename = os.path.join(content_type_dir, f"{os.path.basename(image_path).split('.')[0]}_elements.jsonl")
+                                    # Add table structure task to be processed in batch later
+                                    table_structure_tasks.append({
+                                        'temp_path': temp_table_path,
+                                        'image_path': image_filename,
+                                        'cropped_image': cropped_image,
+                                        'element_with_type': element_with_type
+                                    })
+                                
+                                # If this is a chart, track for graphic elements extraction (to be processed in batches)
+                                elif content_type == 'chart':
+                                    # Save the cropped image temporarily for API call
+                                    temp_chart_path = image_filename.replace('.jpg', '_for_api.jpg')
+                                    cropped_image.save(temp_chart_path, "JPEG", quality=80)
                                     
-                                    # Process each element and save sub-image
-                                    for idx, element in enumerate(elements):
-                                        # Add content type to the element for clarity
-                                        element_with_type = element.copy()
-                                        element_with_type['type'] = content_type
-                                        element_with_type['image_path'] = image_path
-                                        
-                                        # Calculate pixel coordinates from normalized coordinates
-                                        x_min = int(element['x_min'] * img_width)
-                                        y_min = int(element['y_min'] * img_height)
-                                        x_max = int(element['x_max'] * img_width)
-                                        y_max = int(element['y_max'] * img_height)
-                                        
-                                        # Crop the sub-image based on bounding box
-                                        cropped_image = original_image.crop((x_min, y_min, x_max, y_max))
-                                        
-                                        # Save the cropped image in the content type directory
-                                        image_filename = os.path.join(content_type_dir, f"{os.path.basename(image_path).split('.')[0]}_element_{idx+1}_{content_type}.jpg")
-                                        cropped_image.save(image_filename, "JPEG", quality=90)
-                                        
-                                        # Add the sub-image path to the element data
-                                        element_with_type['sub_image_path'] = image_filename
-                                        
-                                        # If this is a table, track for table structure extraction
-                                        if content_type == 'table':
-                                            # Save the cropped image temporarily for API call
-                                            temp_table_path = image_filename.replace('.jpg', '_for_api.jpg')
-                                            cropped_image.save(temp_table_path, "JPEG", quality=80)
-                                            
-                                            # Add table structure task to be processed in batch later
-                                            table_structure_tasks.append({
-                                                'temp_path': temp_table_path,
-                                                'image_path': image_filename,
-                                                'cropped_image': cropped_image,
-                                                'element_with_type': element_with_type
-                                            })
-                                        
-                                        # If this is a chart, extract graphic elements
-                                        elif content_type == 'chart':
-                                            # Save the cropped image temporarily for API call
-                                            temp_chart_path = image_filename.replace('.jpg', '_for_api.jpg')
-                                            cropped_image.save(temp_chart_path, "JPEG", quality=80)
-                                            
-                                            # Extract graphic elements from the chart
-                                            try:
-                                                if timing:
-                                                    start_time = time.time()
-                                                graphic_elements = extract_graphic_elements(temp_chart_path, api_key)
-                                                if timing:
-                                                    chart_structure_time += time.time() - start_time
-                                                
-                                                # Save the graphic elements as a JSON file
-                                                elements_filename = image_filename.replace('.jpg', '_elements.json')
-                                                with open(elements_filename, 'w') as f:
-                                                    json.dump(graphic_elements, f, indent=2)
-                                                
-                                                # Add elements file path to the element data
-                                                element_with_type['elements_path'] = elements_filename
-                                                
-                                                # Create a subdirectory for chart elements
-                                                chart_elements_dir = image_filename.replace('.jpg', '_elements')
-                                                os.makedirs(chart_elements_dir, exist_ok=True)
-                                                
-                                                # Extract element images from graphic elements
-                                                if 'data' in graphic_elements and graphic_elements['data']:
-                                                    for page_elements in graphic_elements['data']:
-                                                        if 'bounding_boxes' in page_elements:
-                                                            # Process all types of graphic elements (labels, axes, etc.)
-                                                            for elem_type, elem_list in page_elements['bounding_boxes'].items():
-                                                                if elem_list and isinstance(elem_list, list):
-                                                                    # Get the dimensions of the cropped chart image to convert normalized coordinates
-                                                                    chart_width, chart_height = cropped_image.size
-                                                                    
-                                                                    for elem_idx, elem in enumerate(elem_list):
-                                                                        if 'x_min' in elem and 'y_min' in elem and 'x_max' in elem and 'y_max' in elem:
-                                                                            # Calculate pixel coordinates from normalized coordinates
-                                                                            elem_x_min = int(elem['x_min'] * chart_width)
-                                                                            elem_y_min = int(elem['y_min'] * chart_height)
-                                                                            elem_x_max = int(elem['x_max'] * chart_width)
-                                                                            elem_y_max = int(elem['y_max'] * chart_height)
-                                                                        
-                                                                            # Ensure coordinates are within image bounds
-                                                                            elem_x_min = max(0, elem_x_min)
-                                                                            elem_y_min = max(0, elem_y_min)
-                                                                            elem_x_max = min(chart_width, elem_x_max)
-                                                                            elem_y_max = min(chart_height, elem_y_max)
-                                                                        
-                                                                            # Crop the element from the chart image
-                                                                            if elem_x_max > elem_x_min and elem_y_max > elem_y_min:
-                                                                                elem_image = cropped_image.crop((elem_x_min, elem_y_min, elem_x_max, elem_y_max))
-                                                                            
-                                                                                # Create filename for the element image
-                                                                                base_name = os.path.basename(image_filename).replace('.jpg', '')
-                                                                                elem_image_filename = os.path.join(chart_elements_dir, f"{base_name}_{elem_type}_{elem_idx+1}.jpg")
-                                                                                elem_image.save(elem_image_filename, "JPEG", quality=90)
-                                                                            
-                                                                                # Add chart element image to OCR tasks to process later in batches
-                                                                                chart_element_ocr_tasks.append(elem_image_filename)
-                                                
-                                                # Remove temporary image used for API call
-                                                os.remove(temp_chart_path)
-                                            except Exception as e:
-                                                print(f"Error extracting graphic elements for {image_filename}: {str(e)}")
-                                        
-                                        # If this is a title, track the image for OCR if requested
-                                        elif content_type == 'title':
-                                            if ocr_titles:
-                                                # Add title image to OCR tasks to process later in batches
-                                                title_ocr_tasks.append(image_filename)
-                                        
-                                        with open(jsonl_filename, 'a') as f:
-                                            f.write(json.dumps(element_with_type) + '\n')
-                                            
-                            # Close the original image to free memory
-                            original_image.close()
-                else:
-                    print(f"No data found in response for {image_path}")
-                    print(f"Full response: {result}")
-            except Exception as e:
-                print(f"Error processing {image_path}: {str(e)}")
+                                    # Add chart graphic elements task to be processed in batch later
+                                    chart_graphic_elements_tasks.append({
+                                        'temp_path': temp_chart_path,
+                                        'image_path': image_filename,
+                                        'cropped_image': cropped_image,
+                                        'element_with_type': element_with_type
+                                    })
+                                
+                                # If this is a title, track the image for OCR if requested
+                                elif content_type == 'title':
+                                    if ocr_titles:
+                                        # Add title image to OCR tasks to process later in batches
+                                        title_ocr_tasks.append(image_filename)
+                                
+                                with open(jsonl_filename, 'a') as f:
+                                    f.write(json.dumps(element_with_type) + '\n')
+                                    
+                    # Close the original image to free memory
+                    original_image.close()
+        except Exception as e:
+            print(f"Error processing page elements batch: {str(e)}")
+            # DEBUG: Add more detailed error information
+            # import traceback
+            # print(f"DEBUG: Full traceback for batch error:")
+            # traceback.print_exc()
+            
+            # If batch processing fails, fall back to individual processing
+            for img_path in batch_paths:
+                # print(f"Falling back to processing {img_path} individually...")  # Commented out to reduce noise
+                # We would need to call single image processing here
+                pass
     
     # Now process all the table structure tasks in batches
     if table_structure_tasks:
