@@ -228,6 +228,7 @@ def extract(pdf_path="data/multimodal_test.pdf", output_dir="page_elements", ext
     # Configure API rate limiting
     rate_limit_start = time.time()
     utils.configure_api_rate_limit(max_concurrent_requests, requests_per_minute, max_workers)
+    utils.reset_api_request_count()
     rate_limit_time = time.time() - rate_limit_start
     
     # Process page images to extract content elements with structure and OCR
@@ -276,6 +277,7 @@ def extract(pdf_path="data/multimodal_test.pdf", output_dir="page_elements", ext
     from utils import save_extracted_content_to_json
     save_extracted_content_to_json(result, extract_dir=extract_dir)
     post_processing_time = time.time() - post_processing_start
+    total_api_requests = utils.get_api_request_count()
     
     # Calculate time for other processing operations that weren't timed separately
     total_time = time.time() - start_time
@@ -302,18 +304,20 @@ def extract(pdf_path="data/multimodal_test.pdf", output_dir="page_elements", ext
         remaining_processing_pct = (remaining_processing_time / total_time) * 100 if total_time > 0 else 0
         
         # Get OCR task counts for breakdown
-        ocr_task_counts = timing_data.get('ocr_task_counts', {'table_cells': 0, 'chart_elements': 0, 'titles': 0})
-        total_ocr_tasks = ocr_task_counts['table_cells'] + ocr_task_counts['chart_elements'] + ocr_task_counts['titles']
+        ocr_task_counts = timing_data.get('ocr_task_counts', {'tables': 0, 'charts': 0, 'infographics': 0, 'titles': 0})
+        total_ocr_tasks = ocr_task_counts['tables'] + ocr_task_counts['charts'] + ocr_task_counts['infographics'] + ocr_task_counts['titles']
         title_pct = 0
-        cell_pct = 0
+        table_pct = 0
         chart_pct = 0
+        infographic_pct = 0
 
-        ocr_task_counts = timing_data.get('ocr_task_counts', {'table_cells': 0, 'chart_elements': 0, 'titles': 0})
-        total_ocr_tasks = ocr_task_counts['table_cells'] + ocr_task_counts['chart_elements'] + ocr_task_counts['titles']
+        ocr_task_counts = timing_data.get('ocr_task_counts', {'tables': 0, 'charts': 0, 'infographics': 0, 'titles': 0})
+        total_ocr_tasks = ocr_task_counts['tables'] + ocr_task_counts['charts'] + ocr_task_counts['infographics'] + ocr_task_counts['titles']
         if total_ocr_tasks > 0:
             title_pct = (ocr_task_counts['titles'] / total_ocr_tasks) * 100
-            cell_pct = (ocr_task_counts['table_cells'] / total_ocr_tasks) * 100
-            chart_pct = (ocr_task_counts['chart_elements'] / total_ocr_tasks) * 100
+            table_pct = (ocr_task_counts['tables'] / total_ocr_tasks) * 100
+            chart_pct = (ocr_task_counts['charts'] / total_ocr_tasks) * 100
+            infographic_pct = (ocr_task_counts['infographics'] / total_ocr_tasks) * 100
         
         log(f"""
 Timing Summary:
@@ -321,12 +325,16 @@ PDF Extraction: {pdf_extraction_time:.2f}s ({pdf_extraction_pct:.1f}%)
 AI Processing (Elements, Structure, OCR): {ai_processing_time_total:.2f}s ({ai_processing_pct:.1f}%)
   OCR Breakdown:
     Titles: {ocr_task_counts['titles']} tasks ({title_pct:.1f}%)
-    Table Cells: {ocr_task_counts['table_cells']} tasks ({cell_pct:.1f}%)
-    Chart Elements: {ocr_task_counts['chart_elements']} tasks ({chart_pct:.1f}%)
+    Tables: {ocr_task_counts['tables']} tasks ({table_pct:.1f}%)
+    Charts: {ocr_task_counts['charts']} tasks ({chart_pct:.1f}%)
+    Infographics: {ocr_task_counts['infographics']} tasks ({infographic_pct:.1f}%)
 Embedding Generation: {embedding_generation_time:.2f}s ({embedding_generation_pct:.1f}%)
 LanceDB Indexing: {lancedb_time:.2f}s ({lancedb_pct:.1f}%)
+Total NVIDIA API Requests: {total_api_requests}
 Total: {total_time:.2f}s
         """, level="ALWAYS")
+    else:
+        log(f"Total NVIDIA API Requests: {total_api_requests}", level="ALWAYS")
 
     return result
 
@@ -365,54 +373,66 @@ def get_text_stats(output_dir="page_elements"):
                             data = json.loads(line)
                             
                             # Count OCR requests for this element
-                            if content_type in ['table', 'chart']:
-                                # Tables and charts have cell-level OCR
-                                cells_dir = data['sub_image_path'].replace('.jpg', '_cells')
-                                if os.path.exists(cells_dir):
-                                    total_inference_requests += len(glob.glob(os.path.join(cells_dir, "*_ocr.json")))
+                            if content_type == 'table':
+                                table_ocr_path = data['sub_image_path'].replace('.jpg', '_ocr.json')
+                                if os.path.exists(table_ocr_path):
+                                    total_inference_requests += 1
+                            elif content_type == 'chart':
+                                elements_dir = data['sub_image_path'].replace('.jpg', '_elements')
+                                if os.path.exists(data['sub_image_path'].replace('.jpg', '_ocr.json')):
+                                    total_inference_requests += 1
+                            elif content_type == 'infographic':
+                                if os.path.exists(data['sub_image_path'].replace('.jpg', '_ocr.json')):
+                                    total_inference_requests += 1
                             elif content_type == 'title' and 'ocr_path' in data:
                                 # Titles have direct OCR
                                 total_inference_requests += 1
-                            elif content_type == 'chart':
-                                # Charts have element-level OCR
-                                elements_dir = data['sub_image_path'].replace('.jpg', '_elements')
-                                if os.path.exists(elements_dir):
-                                    total_inference_requests += len(glob.glob(os.path.join(elements_dir, "*_ocr.json")))
                             else:
                                 # Other content types (likely figures, equations, etc.)
                                 total_inference_requests += 1
                             
                             # Collect text statistics from OCR results if available
                             if content_type == 'table':
-                                # For tables, collect text from cell OCR results
-                                cells_dir = data['sub_image_path'].replace('.jpg', '_cells')
-                                if os.path.exists(cells_dir):
-                                    for ocr_file in glob.glob(os.path.join(cells_dir, "*_ocr.json")):
-                                        with open(ocr_file, 'r') as ocr_f:
-                                            ocr_data = json.load(ocr_f)
-                                            if 'data' in ocr_data and ocr_data['data']:
-                                                for item in ocr_data['data']:
-                                                    if 'text_detections' in item:
-                                                        for text_det in item['text_detections']:
-                                                            text = text_det['text_prediction']['text']
-                                                            total_words += len(text.split())
-                                                            total_chars += len(text)
-                                                            total_lines += text.count('\n') + 1
+                                # For tables, collect text from whole-table OCR
+                                ocr_file = data['sub_image_path'].replace('.jpg', '_ocr.json')
+                                if os.path.exists(ocr_file):
+                                    with open(ocr_file, 'r') as ocr_f:
+                                        ocr_data = json.load(ocr_f)
+                                        if 'data' in ocr_data and ocr_data['data']:
+                                            for item in ocr_data['data']:
+                                                if 'text_detections' in item:
+                                                    for text_det in item['text_detections']:
+                                                        text = text_det['text_prediction']['text']
+                                                        total_words += len(text.split())
+                                                        total_chars += len(text)
+                                                        total_lines += text.count('\n') + 1
                             elif content_type == 'chart':
-                                # For charts, collect text from element OCR results
-                                elements_dir = data['sub_image_path'].replace('.jpg', '_elements')
-                                if os.path.exists(elements_dir):
-                                    for ocr_file in glob.glob(os.path.join(elements_dir, "*_ocr.json")):
-                                        with open(ocr_file, 'r') as ocr_f:
-                                            ocr_data = json.load(ocr_f)
-                                            if 'data' in ocr_data and ocr_data['data']:
-                                                for item in ocr_data['data']:
-                                                    if 'text_detections' in item:
-                                                        for text_det in item['text_detections']:
-                                                            text = text_det['text_prediction']['text']
-                                                            total_words += len(text.split())
-                                                            total_chars += len(text)
-                                                            total_lines += text.count('\n') + 1
+                                # For charts, collect text from whole-chart OCR
+                                ocr_file = data['sub_image_path'].replace('.jpg', '_ocr.json')
+                                if os.path.exists(ocr_file):
+                                    with open(ocr_file, 'r') as ocr_f:
+                                        ocr_data = json.load(ocr_f)
+                                        if 'data' in ocr_data and ocr_data['data']:
+                                            for item in ocr_data['data']:
+                                                if 'text_detections' in item:
+                                                    for text_det in item['text_detections']:
+                                                        text = text_det['text_prediction']['text']
+                                                        total_words += len(text.split())
+                                                        total_chars += len(text)
+                                                        total_lines += text.count('\n') + 1
+                            elif content_type == 'infographic':
+                                ocr_file = data['sub_image_path'].replace('.jpg', '_ocr.json')
+                                if os.path.exists(ocr_file):
+                                    with open(ocr_file, 'r') as ocr_f:
+                                        ocr_data = json.load(ocr_f)
+                                        if 'data' in ocr_data and ocr_data['data']:
+                                            for item in ocr_data['data']:
+                                                if 'text_detections' in item:
+                                                    for text_det in item['text_detections']:
+                                                        text = text_det['text_prediction']['text']
+                                                        total_words += len(text.split())
+                                                        total_chars += len(text)
+                                                        total_lines += text.count('\n') + 1
                             elif content_type == 'title' and 'ocr_path' in data:
                                 # For titles, collect text from direct OCR result
                                 ocr_path = data['ocr_path']

@@ -53,6 +53,7 @@ _api_rate_limit_lock = Lock()  # Protect access to timestamp tracking
 _api_max_concurrent_requests = 10  # Configurable maximum concurrent requests
 _api_requests_per_minute = 40  # Default: 40 requests per minute
 _api_max_workers = None  # Default to system CPU count for thread pools
+_api_total_request_count = 0  # Actual outbound NVIDIA API requests made in this process
 
 def configure_api_rate_limit(max_concurrent_requests=10, requests_per_minute=40, max_workers=None):
     """
@@ -75,6 +76,25 @@ def configure_api_rate_limit(max_concurrent_requests=10, requests_per_minute=40,
     log(f"API rate limit configured: {max_concurrent_requests} concurrent requests maximum, {requests_per_minute} requests per minute maximum")
     if max_workers:
         log(f"Thread pool max workers configured: {max_workers}")
+
+
+def reset_api_request_count():
+    """Reset the running count of outbound NVIDIA API requests."""
+    global _api_total_request_count
+    with _api_rate_limit_lock:
+        _api_total_request_count = 0
+
+
+def get_api_request_count():
+    """Return the running count of outbound NVIDIA API requests."""
+    with _api_rate_limit_lock:
+        return _api_total_request_count
+
+
+def _record_api_request():
+    """Increment the running count of outbound NVIDIA API requests."""
+    global _api_total_request_count
+    _api_total_request_count += 1
 
 def _enforce_rate_limit():
     """
@@ -152,6 +172,7 @@ def _make_batch_request(items, api_endpoint, headers, batch_size, payload_proces
                     # Record request timestamp
                     with _api_rate_limit_lock:
                         _api_request_timestamps.append(time.time())
+                    _record_api_request()
                     
                     response = requests.post(api_endpoint, headers=headers, json=payload)
                 
@@ -211,6 +232,7 @@ def _make_batch_request(items, api_endpoint, headers, batch_size, payload_proces
                     # Record request timestamp
                     with _api_rate_limit_lock:
                         _api_request_timestamps.append(time.time())
+                    _record_api_request()
                     
                     response = requests.post(api_endpoint, headers=headers, json=payload)
                 
@@ -311,6 +333,7 @@ def _make_embedding_batch_request(items, client, batch_size, api_description="em
                 # Record request timestamp
                 with _api_rate_limit_lock:
                     _api_request_timestamps.append(time.time())
+                _record_api_request()
             
             # Generate embeddings for the batch
             response = client.embeddings.create(
@@ -345,6 +368,7 @@ def _make_embedding_batch_request(items, client, batch_size, api_description="em
                         # Record request timestamp
                         with _api_rate_limit_lock:
                             _api_request_timestamps.append(time.time())
+                        _record_api_request()
                     
                     response = client.embeddings.create(
                         input=[content],
@@ -425,6 +449,7 @@ def extract_bounding_boxes(image_path, api_key=None):
         # Record request timestamp
         with _api_rate_limit_lock:
             _api_request_timestamps.append(time.time())
+        _record_api_request()
         
         response = requests.post(invoke_url, headers=headers, json=payload)
     
@@ -548,6 +573,7 @@ def extract_table_structure(image_path, api_key=None):
         # Record request timestamp
         with _api_rate_limit_lock:
             _api_request_timestamps.append(time.time())
+        _record_api_request()
         
         response = requests.post(invoke_url, headers=headers, json=payload)
     
@@ -674,6 +700,7 @@ def extract_ocr_text(image_path, api_key=None):
         # Record request timestamp
         with _api_rate_limit_lock:
             _api_request_timestamps.append(time.time())
+        _record_api_request()
         
         response = requests.post(invoke_url, headers=headers, json=payload)
     
@@ -914,8 +941,8 @@ def process_page_images(pages_dir="pages", output_dir="page_elements", timing=Fa
                 'ocr_time': 0,
                 'ai_processing_time': 0,
                 'ocr_task_counts': {
-                    'table_cells': 0,
-                    'chart_elements': 0,
+                    'tables': 0,
+                    'charts': 0,
                     'titles': 0
                 }
             }
@@ -926,10 +953,11 @@ def process_page_images(pages_dir="pages", output_dir="page_elements", timing=Fa
     
     # Lists to collect tasks for batch processing later
     table_structure_tasks = []
-    table_cell_ocr_tasks = []
-    chart_element_ocr_tasks = []
+    table_ocr_tasks = []
+    chart_ocr_tasks = []
     chart_graphic_elements_tasks = []  # New list for chart graphic elements
     title_ocr_tasks = []
+    infographic_ocr_tasks = []
     
     # Process all page images
     page_images = glob(os.path.join(pages_dir, "*.jpg")) + glob(os.path.join(pages_dir, "*.png"))
@@ -1053,6 +1081,8 @@ def process_page_images(pages_dir="pages", output_dir="page_elements", timing=Fa
                                     if ocr_titles:
                                         # Add title image to OCR tasks to process later in batches
                                         title_ocr_tasks.append(image_filename)
+                                elif content_type == 'infographic':
+                                    infographic_ocr_tasks.append(image_filename)
                                 
                                 with open(jsonl_filename, 'a') as f:
                                     f.write(json.dumps(element_with_type) + '\n')
@@ -1121,51 +1151,9 @@ def process_page_images(pages_dir="pages", output_dir="page_elements", timing=Fa
                 # Add structure file path to the element data
                 element_with_type['structure_path'] = structure_filename
                 
-                # Create a subdirectory for table cells
-                table_cells_dir = image_path.replace('.jpg', '_cells')
-                os.makedirs(table_cells_dir, exist_ok=True)
-                
-                # Extract cell images from table structure
-                # After batch processing, table structure has bounding_boxes directly (not under 'data' field)
-                initial_table_ocr_count = len(table_cell_ocr_tasks)
-                if 'bounding_boxes' in table_structure and 'cell' in table_structure['bounding_boxes']:
-                    cells = table_structure['bounding_boxes']['cell']
-                    total_cells_found = len(cells)
-                    # print(f"DEBUG: Found {total_cells_found} cells in table structure")
-                    
-                    # Get the dimensions of the cropped table image to convert normalized coordinates
-                    table_width, table_height = cropped_image.size
-                    
-                    for cell_idx, cell in enumerate(cells):
-                        # Calculate pixel coordinates from normalized coordinates
-                        cell_x_min = int(cell['x_min'] * table_width)
-                        cell_y_min = int(cell['y_min'] * table_height)
-                        cell_x_max = int(cell['x_max'] * table_width)
-                        cell_y_max = int(cell['y_max'] * table_height)
-                        
-                        # Ensure coordinates are within image bounds
-                        cell_x_min = max(0, cell_x_min)
-                        cell_y_min = max(0, cell_y_min)
-                        cell_x_max = min(table_width, cell_x_max)
-                        cell_y_max = min(table_height, cell_y_max)
-                        
-                        # Crop the cell from the table image
-                        if cell_x_max > cell_x_min and cell_y_max > cell_y_min:
-                            cell_image = cropped_image.crop((cell_x_min, cell_y_min, cell_x_max, cell_y_max))
-                            
-                            # Create filename based on source, page number, element number, and cell number
-                            base_name = os.path.basename(image_path).replace('.jpg', '')
-                            cell_image_filename = os.path.join(table_cells_dir, f"{base_name}_cell_{cell_idx+1}.jpg")
-                            cell_image.save(cell_image_filename, "JPEG", quality=90)
-                            
-                            # Add cell image to OCR tasks to process later in batches
-                            table_cell_ocr_tasks.append(cell_image_filename)
-                    # print(f"DEBUG: Table {os.path.basename(image_path)} - Found {total_cells_found} total cells in structure")
-                # No 'else' needed here - just continue with logging if no cells found
-                
-                # Log how many cells were added for this table
-                added_count = len(table_cell_ocr_tasks) - initial_table_ocr_count
-                # print(f"DEBUG: Table {os.path.basename(image_path)} - Actually added {added_count} cells to OCR tasks, total table OCR tasks now: {len(table_cell_ocr_tasks)}")
+                # Follow NeMo Retriever's structure-first, whole-table OCR flow:
+                # run one OCR request on the full table crop after structure extraction.
+                table_ocr_tasks.append(image_path)
                 
                 # Remove temporary image used for API call
                 if os.path.exists(temp_path):
@@ -1195,81 +1183,7 @@ def process_page_images(pages_dir="pages", output_dir="page_elements", timing=Fa
                     # Add structure file path to the element data
                     element_with_type['structure_path'] = structure_filename
                     
-                    # Create a subdirectory for table cells
-                    table_cells_dir = image_path.replace('.jpg', '_cells')
-                    os.makedirs(table_cells_dir, exist_ok=True)
-                    
-                    # Extract cell images from table structure
-                    initial_table_ocr_count = len(table_cell_ocr_tasks)
-                    # Check both possible structures: original (with 'data' field) and direct structure
-                    if 'data' in table_structure and table_structure['data']:
-                        # Original structure: results under 'data' field (for fallback individual processing)
-                        for page_struct in table_structure['data']:
-                            if 'bounding_boxes' in page_struct and 'cell' in page_struct['bounding_boxes']:
-                                cells = page_struct['bounding_boxes']['cell']
-                                
-                                # Get the dimensions of the cropped table image to convert normalized coordinates
-                                table_width, table_height = cropped_image.size
-                                
-                                for cell_idx, cell in enumerate(cells):
-                                    # Calculate pixel coordinates from normalized coordinates
-                                    cell_x_min = int(cell['x_min'] * table_width)
-                                    cell_y_min = int(cell['y_min'] * table_height)
-                                    cell_x_max = int(cell['x_max'] * table_width)
-                                    cell_y_max = int(cell['y_max'] * table_height)
-                                    
-                                    # Ensure coordinates are within image bounds
-                                    cell_x_min = max(0, cell_x_min)
-                                    cell_y_min = max(0, cell_y_min)
-                                    cell_x_max = min(table_width, cell_x_max)
-                                    cell_y_max = min(table_height, cell_y_max)
-                                    
-                                    # Crop the cell from the table image
-                                    if cell_x_max > cell_x_min and cell_y_max > cell_y_min:
-                                        cell_image = cropped_image.crop((cell_x_min, cell_y_min, cell_x_max, cell_y_max))
-                                        
-                                        # Create filename based on source, page number, element number, and cell number
-                                        base_name = os.path.basename(image_path).replace('.jpg', '')
-                                        cell_image_filename = os.path.join(table_cells_dir, f"{base_name}_cell_{cell_idx+1}.jpg")
-                                        cell_image.save(cell_image_filename, "JPEG", quality=90)
-                                        
-                                        # Add cell image to OCR tasks to process later in batches
-                                        table_cell_ocr_tasks.append(cell_image_filename)
-                    elif 'bounding_boxes' in table_structure and 'cell' in table_structure['bounding_boxes']:
-                        # Direct structure (for fallback individual processing with same structure as batch)
-                        cells = table_structure['bounding_boxes']['cell']
-                        
-                        # Get the dimensions of the cropped table image to convert normalized coordinates
-                        table_width, table_height = cropped_image.size
-                        
-                        for cell_idx, cell in enumerate(cells):
-                            # Calculate pixel coordinates from normalized coordinates
-                            cell_x_min = int(cell['x_min'] * table_width)
-                            cell_y_min = int(cell['y_min'] * table_height)
-                            cell_x_max = int(cell['x_max'] * table_width)
-                            cell_y_max = int(cell['y_max'] * table_height)
-                            
-                            # Ensure coordinates are within image bounds
-                            cell_x_min = max(0, cell_x_min)
-                            cell_y_min = max(0, cell_y_min)
-                            cell_x_max = min(table_width, cell_x_max)
-                            cell_y_max = min(table_height, cell_y_max)
-                            
-                            # Crop the cell from the table image
-                            if cell_x_max > cell_x_min and cell_y_max > cell_y_min:
-                                cell_image = cropped_image.crop((cell_x_min, cell_y_min, cell_x_max, cell_y_max))
-                                
-                                # Create filename based on source, page number, element number, and cell number
-                                base_name = os.path.basename(image_path).replace('.jpg', '')
-                                cell_image_filename = os.path.join(table_cells_dir, f"{base_name}_cell_{cell_idx+1}.jpg")
-                                cell_image.save(cell_image_filename, "JPEG", quality=90)
-                                
-                                # Add cell image to OCR tasks to process later in batches
-                                table_cell_ocr_tasks.append(cell_image_filename)
-                    
-                    # Log how many cells were added for this table
-                    added_count = len(table_cell_ocr_tasks) - initial_table_ocr_count
-                    # print(f"DEBUG: Table {os.path.basename(image_path)} - Added {added_count} cells to OCR tasks, total table OCR tasks now: {len(table_cell_ocr_tasks)}")
+                    table_ocr_tasks.append(image_path)
                     
                     # Remove temporary image used for API call
                     if os.path.exists(temp_path):
@@ -1335,44 +1249,7 @@ def process_page_images(pages_dir="pages", output_dir="page_elements", timing=Fa
                 # Add elements file path to the element data
                 element_with_type['elements_path'] = elements_filename
                 
-                # Create a subdirectory for chart elements
-                chart_elements_dir = image_path.replace('.jpg', '_elements')
-                os.makedirs(chart_elements_dir, exist_ok=True)
-                
-                # Extract element images from graphic elements
-                # The chart_elements response has bounding_boxes directly (not under 'data' field)
-                if 'bounding_boxes' in chart_elements:
-                    # Process all types of graphic elements (labels, axes, etc.)
-                    for elem_type, elem_list in chart_elements['bounding_boxes'].items():
-                                if elem_list and isinstance(elem_list, list):
-                                    # Get the dimensions of the cropped chart image to convert normalized coordinates
-                                    chart_width, chart_height = cropped_image.size
-                                    
-                                    for elem_idx, elem in enumerate(elem_list):
-                                        if 'x_min' in elem and 'y_min' in elem and 'x_max' in elem and 'y_max' in elem:
-                                            # Calculate pixel coordinates from normalized coordinates
-                                            elem_x_min = int(elem['x_min'] * chart_width)
-                                            elem_y_min = int(elem['y_min'] * chart_height)
-                                            elem_x_max = int(elem['x_max'] * chart_width)
-                                            elem_y_max = int(elem['y_max'] * chart_height)
-                                            
-                                            # Ensure coordinates are within image bounds
-                                            elem_x_min = max(0, elem_x_min)
-                                            elem_y_min = max(0, elem_y_min)
-                                            elem_x_max = min(chart_width, elem_x_max)
-                                            elem_y_max = min(chart_height, elem_y_max)
-                                            
-                                            # Crop the element from the chart image
-                                            if elem_x_max > elem_x_min and elem_y_max > elem_y_min:
-                                                elem_image = cropped_image.crop((elem_x_min, elem_y_min, elem_x_max, elem_y_max))
-                                                
-                                                # Create filename for the element image
-                                                base_name = os.path.basename(image_path).replace('.jpg', '')
-                                                elem_image_filename = os.path.join(chart_elements_dir, f"{base_name}_{elem_type}_{elem_idx+1}.jpg")
-                                                elem_image.save(elem_image_filename, "JPEG", quality=90)
-                                                
-                                                # Add chart element image to OCR tasks to process later in batches
-                                                chart_element_ocr_tasks.append(elem_image_filename)
+                chart_ocr_tasks.append(image_path)
                 
                 # Remove temporary image used for API call
                 if os.path.exists(temp_path):
@@ -1402,85 +1279,7 @@ def process_page_images(pages_dir="pages", output_dir="page_elements", timing=Fa
                     # Add elements file path to the element data
                     element_with_type['elements_path'] = elements_filename
                     
-                    # Create a subdirectory for chart elements
-                    chart_elements_dir = image_path.replace('.jpg', '_elements')
-                    os.makedirs(chart_elements_dir, exist_ok=True)
-                    
-                    # Extract element images from graphic elements
-                    initial_chart_ocr_count = len(chart_element_ocr_tasks)
-                    # Sequential processing: check original structure first, then fallback structure
-                    if 'data' in chart_elements and chart_elements['data']:
-                        # Original structure: results under 'data' field
-                        for page_elements in chart_elements['data']:
-                            if 'bounding_boxes' in page_elements:
-                                # Process all types of graphic elements (labels, axes, etc.)
-                                for elem_type, elem_list in page_elements['bounding_boxes'].items():
-                                    if elem_list and isinstance(elem_list, list):
-                                        # Get the dimensions of the cropped chart image to convert normalized coordinates
-                                        chart_width, chart_height = cropped_image.size
-                                        
-                                        for elem_idx, elem in enumerate(elem_list):
-                                            if 'x_min' in elem and 'y_min' in elem and 'x_max' in elem and 'y_max' in elem:
-                                                # Calculate pixel coordinates from normalized coordinates
-                                                elem_x_min = int(elem['x_min'] * chart_width)
-                                                elem_y_min = int(elem['y_min'] * chart_height)
-                                                elem_x_max = int(elem['x_max'] * chart_width)
-                                                elem_y_max = int(elem['y_max'] * chart_height)
-                                                
-                                                # Ensure coordinates are within image bounds
-                                                elem_x_min = max(0, elem_x_min)
-                                                elem_y_min = max(0, elem_y_min)
-                                                elem_x_max = min(chart_width, elem_x_max)
-                                                elem_y_max = min(chart_height, elem_y_max)
-                                                
-                                                # Crop the element from the chart image
-                                                if elem_x_max > elem_x_min and elem_y_max > elem_y_min:
-                                                    elem_image = cropped_image.crop((elem_x_min, elem_y_min, elem_x_max, elem_y_max))
-                                                    
-                                                    # Create filename for the element image
-                                                    base_name = os.path.basename(image_path).replace('.jpg', '')
-                                                    elem_image_filename = os.path.join(chart_elements_dir, f"{base_name}_{elem_type}_{elem_idx+1}.jpg")
-                                                    elem_image.save(elem_image_filename, "JPEG", quality=90)
-                                                    
-                                                    # Add chart element image to OCR tasks to process later in batches
-                                                    chart_element_ocr_tasks.append(elem_image_filename)
-                    elif 'bounding_boxes' in chart_elements:
-                        # Direct structure (for fallback individual processing)
-                        # Process all types of graphic elements (labels, axes, etc.)
-                        for elem_type, elem_list in chart_elements['bounding_boxes'].items():
-                            if elem_list and isinstance(elem_list, list):
-                                # Get the dimensions of the cropped chart image to convert normalized coordinates
-                                chart_width, chart_height = cropped_image.size
-                                
-                                for elem_idx, elem in enumerate(elem_list):
-                                    if 'x_min' in elem and 'y_min' in elem and 'x_max' in elem and 'y_max' in elem:
-                                        # Calculate pixel coordinates from normalized coordinates
-                                        elem_x_min = int(elem['x_min'] * chart_width)
-                                        elem_y_min = int(elem['y_min'] * chart_height)
-                                        elem_x_max = int(elem['x_max'] * chart_width)
-                                        elem_y_max = int(elem['y_max'] * chart_height)
-                                        
-                                        # Ensure coordinates are within image bounds
-                                        elem_x_min = max(0, elem_x_min)
-                                        elem_y_min = max(0, elem_y_min)
-                                        elem_x_max = min(chart_width, elem_x_max)
-                                        elem_y_max = min(chart_height, elem_y_max)
-                                        
-                                        # Crop the element from the chart image
-                                        if elem_x_max > elem_x_min and elem_y_max > elem_y_min:
-                                            elem_image = cropped_image.crop((elem_x_min, elem_y_min, elem_x_max, elem_y_max))
-                                            
-                                            # Create filename for the element image
-                                            base_name = os.path.basename(image_path).replace('.jpg', '')
-                                            elem_image_filename = os.path.join(chart_elements_dir, f"{base_name}_{elem_type}_{elem_idx+1}.jpg")
-                                            elem_image.save(elem_image_filename, "JPEG", quality=90)
-                                            
-                                            # Add chart element image to OCR tasks to process later in batches
-                                            chart_element_ocr_tasks.append(elem_image_filename)
-                    
-                    # Log how many elements were added for this chart
-                    added_count = len(chart_element_ocr_tasks) - initial_chart_ocr_count
-                    # print(f"DEBUG: Chart {os.path.basename(image_path)} - Added {added_count} elements to OCR tasks, total chart OCR tasks now: {len(chart_element_ocr_tasks)}")
+                    chart_ocr_tasks.append(image_path)
                     
                     # Remove temporary image used for API call
                     if os.path.exists(temp_path):
@@ -1489,15 +1288,17 @@ def process_page_images(pages_dir="pages", output_dir="page_elements", timing=Fa
                     print(f"Error processing graphic elements for {temp_path}: {str(e_individual)}")
     
     # Count OCR tasks by type
-    num_table_cell_ocr_tasks = len(table_cell_ocr_tasks)
-    num_chart_element_ocr_tasks = len(chart_element_ocr_tasks)
+    num_table_ocr_tasks = len(table_ocr_tasks)
+    num_chart_ocr_tasks = len(chart_ocr_tasks)
+    num_infographic_ocr_tasks = len(infographic_ocr_tasks)
     num_title_ocr_tasks = len(title_ocr_tasks) if ocr_titles else 0
     
     # Now process all the OCR tasks in batches
     # print(f"DEBUG: Preparing OCR tasks - Table cell tasks: {num_table_cell_ocr_tasks}, Chart element tasks: {num_chart_element_ocr_tasks}, Title tasks: {num_title_ocr_tasks}")
     all_ocr_tasks = []
-    all_ocr_tasks.extend(table_cell_ocr_tasks)
-    all_ocr_tasks.extend(chart_element_ocr_tasks)
+    all_ocr_tasks.extend(table_ocr_tasks)
+    all_ocr_tasks.extend(chart_ocr_tasks)
+    all_ocr_tasks.extend(infographic_ocr_tasks)
     if ocr_titles:
         all_ocr_tasks.extend(title_ocr_tasks)
 
@@ -1584,8 +1385,9 @@ def process_page_images(pages_dir="pages", output_dir="page_elements", timing=Fa
             'ocr_time': ocr_time,
             'ai_processing_time': page_elements_time + table_structure_time + chart_structure_time + ocr_time,
             'ocr_task_counts': {
-                'table_cells': num_table_cell_ocr_tasks,
-                'chart_elements': num_chart_element_ocr_tasks,
+                'tables': num_table_ocr_tasks,
+                'charts': num_chart_ocr_tasks,
+                'infographics': num_infographic_ocr_tasks,
                 'titles': num_title_ocr_tasks
             }
         }
@@ -1670,61 +1472,89 @@ def get_content_counts_with_text_stats(output_dir="page_elements"):
                         page_inference_requests = 0
                         
                         if content_type == 'table':
-                            # 1 for table structure + 1 per saved cell OCR result
+                            # 1 for table structure + 1 for OCR on the whole table crop
                             counts['total_inference_requests'] += 1
                             counts['content_type_breakdown'][content_type]['inference_requests'] += 1
                             page_inference_requests += 1
-                            
-                            cells_dir = data['sub_image_path'].replace('.jpg', '_cells')
-                            if os.path.exists(cells_dir):
-                                cell_files = glob(os.path.join(cells_dir, "*_ocr.json"))
-                                counts['total_inference_requests'] += len(cell_files)
-                                counts['content_type_breakdown'][content_type]['inference_requests'] += len(cell_files)
-                                page_inference_requests += len(cell_files)
 
-                                # Collect text stats from each cell's OCR
-                                for cell_file in cell_files:
-                                    with open(cell_file, 'r') as ocr_f:
-                                        ocr_data = json.load(ocr_f)
-                                        if 'data' in ocr_data and ocr_data['data']:
-                                            for ocr_item in ocr_data['data']:
-                                                if 'text_detections' in ocr_item:
-                                                    for text_det in ocr_item['text_detections']:
-                                                        text = text_det['text_prediction']['text']
-                                                        words = len(text.split())
-                                                        chars = len(text)
-                                                        lines = text.count('\n') + 1
+                            ocr_path = data['sub_image_path'].replace('.jpg', '_ocr.json')
+                            if os.path.exists(ocr_path):
+                                counts['total_inference_requests'] += 1
+                                counts['content_type_breakdown'][content_type]['inference_requests'] += 1
+                                page_inference_requests += 1
 
-                                                        page_text_stats['words'] += words
-                                                        page_text_stats['chars'] += chars
-                                                        page_text_stats['lines'] += lines
+                                with open(ocr_path, 'r') as ocr_f:
+                                    ocr_data = json.load(ocr_f)
+                                    if 'data' in ocr_data and ocr_data['data']:
+                                        for ocr_item in ocr_data['data']:
+                                            if 'text_detections' in ocr_item:
+                                                for text_det in ocr_item['text_detections']:
+                                                    text = text_det['text_prediction']['text']
+                                                    words = len(text.split())
+                                                    chars = len(text)
+                                                    lines = text.count('\n') + 1
 
-                                                        counts['total_text_stats']['words'] += words
-                                                        counts['total_text_stats']['chars'] += chars
-                                                        counts['total_text_stats']['lines'] += lines
+                                                    page_text_stats['words'] += words
+                                                    page_text_stats['chars'] += chars
+                                                    page_text_stats['lines'] += lines
 
-                                                        counts['content_type_breakdown'][content_type]['text_stats']['words'] += words
-                                                        counts['content_type_breakdown'][content_type]['text_stats']['chars'] += chars
-                                                        counts['content_type_breakdown'][content_type]['text_stats']['lines'] += lines
+                                                    counts['total_text_stats']['words'] += words
+                                                    counts['total_text_stats']['chars'] += chars
+                                                    counts['total_text_stats']['lines'] += lines
+
+                                                    counts['content_type_breakdown'][content_type]['text_stats']['words'] += words
+                                                    counts['content_type_breakdown'][content_type]['text_stats']['chars'] += chars
+                                                    counts['content_type_breakdown'][content_type]['text_stats']['lines'] += lines
                         
                         elif content_type == 'chart':
-                            # 1 for graphic elements + 1 per chart element OCR output
+                            # 1 for graphic elements + 1 for OCR on the whole chart crop
                             counts['total_inference_requests'] += 1
                             counts['content_type_breakdown'][content_type]['inference_requests'] += 1
                             page_inference_requests += 1
 
-                            elements_dir = data['sub_image_path'].replace('.jpg', '_elements')
-                            ocr_files = []
-                            if os.path.exists(elements_dir):
-                                ocr_files = glob(os.path.join(elements_dir, "*_ocr.json"))
+                            ocr_path = data['sub_image_path'].replace('.jpg', '_ocr.json')
+                            if os.path.exists(ocr_path):
+                                counts['total_inference_requests'] += 1
+                                counts['content_type_breakdown'][content_type]['inference_requests'] += 1
+                                page_inference_requests += 1
 
-                            counts['total_inference_requests'] += len(ocr_files)
-                            counts['content_type_breakdown'][content_type]['inference_requests'] += len(ocr_files)
-                            page_inference_requests += len(ocr_files)
-
-                            # Collect text stats from chart elements' OCR
-                            for ocr_file in ocr_files:
+                            # Collect text stats from whole-chart OCR
+                            for ocr_file in ([ocr_path] if os.path.exists(ocr_path) else []):
                                 with open(ocr_file, 'r') as ocr_f:
+                                    ocr_data = json.load(ocr_f)
+                                    if 'data' in ocr_data and ocr_data['data']:
+                                        for ocr_item in ocr_data['data']:
+                                            if 'text_detections' in ocr_item:
+                                                for text_det in ocr_item['text_detections']:
+                                                    text = text_det['text_prediction']['text']
+                                                    words = len(text.split())
+                                                    chars = len(text)
+                                                    lines = text.count('\n') + 1
+
+                                                    page_text_stats['words'] += words
+                                                    page_text_stats['chars'] += chars
+                                                    page_text_stats['lines'] += lines
+
+                                                    counts['total_text_stats']['words'] += words
+                                                    counts['total_text_stats']['chars'] += chars
+                                                    counts['total_text_stats']['lines'] += lines
+
+                                                    counts['content_type_breakdown'][content_type]['text_stats']['words'] += words
+                                                    counts['content_type_breakdown'][content_type]['text_stats']['chars'] += chars
+                                                    counts['content_type_breakdown'][content_type]['text_stats']['lines'] += lines
+                        
+                        elif content_type == 'infographic':
+                            counts['total_inference_requests'] += 1
+                            counts['content_type_breakdown'][content_type]['inference_requests'] += 1
+                            page_inference_requests += 1
+
+                            ocr_path = data['sub_image_path'].replace('.jpg', '_ocr.json')
+                            if os.path.exists(ocr_path):
+                                counts['total_inference_requests'] += 1
+                                counts['content_type_breakdown'][content_type]['inference_requests'] += 1
+                                page_inference_requests += 1
+
+                                with open(ocr_path, 'r') as ocr_f:
                                     ocr_data = json.load(ocr_f)
                                     if 'data' in ocr_data and ocr_data['data']:
                                         for ocr_item in ocr_data['data']:
@@ -1945,7 +1775,7 @@ def get_all_extracted_content(pages_dir="pages", output_dir="page_elements"):
                             
                             # Handle content-specific data
                             if content_type == 'table':
-                                # Get table structure and cell data
+                                # Get table structure and whole-table OCR data
                                 # Try to find structure path based on sub_image_path if structure_path field doesn't exist
                                 structure_path = element_data.get('structure_path')
                                 if not structure_path and 'sub_image_path' in element_data and element_data['sub_image_path']:
@@ -1960,36 +1790,6 @@ def get_all_extracted_content(pages_dir="pages", output_dir="page_elements"):
                                         # Add table structure info
                                         element_record['table_structure_path'] = structure_path
                                         
-                                        # Process cells from the bounding_boxes directly (not from a 'data' array)
-                                        if 'bounding_boxes' in struct_data and 'cell' in struct_data['bounding_boxes']:
-                                            cells = struct_data['bounding_boxes']['cell']
-                                            
-                                            # Get cell images and OCR text
-                                            cells_dir = element_data['sub_image_path'].replace('.jpg', '_cells').replace('.png', '_cells')
-                                            if os.path.exists(cells_dir):
-                                                # Process all potential cell files based on the structure data
-                                                for cell_idx, cell in enumerate(cells):
-                                                    cell_image_path = os.path.join(cells_dir, f"{os.path.basename(element_data['sub_image_path']).replace('.jpg', '').replace('.png', '')}_cell_{cell_idx+1}.jpg")
-                                                    ocr_path = cell_image_path.replace('.jpg', '_ocr.json')
-                                                    
-                                                    if os.path.exists(cell_image_path):
-                                                        element_record['related_images'].append(cell_image_path)
-                                                        
-                                                        # Extract OCR text if available
-                                                        if os.path.exists(ocr_path):
-                                                            with open(ocr_path, 'r') as ocr_file:
-                                                                ocr_data = json.load(ocr_file)
-                                                                if 'data' in ocr_data and ocr_data['data']:
-                                                                    for ocr_item in ocr_data['data']:
-                                                                        if 'text_detections' in ocr_item:
-                                                                            for text_det in ocr_item['text_detections']:
-                                                                                element_record['content_texts'].append({
-                                                                                    'text': text_det['text_prediction']['text'],
-                                                                                    'confidence': text_det['text_prediction']['confidence'],
-                                                                                    'source': f"cell_{cell_idx+1}",
-                                                                                    'bounding_box': text_det.get('bounding_box')
-                                                                                })
-                                
                                 # Also try to find text content from the main table image OCR
                                 if 'sub_image_path' in element_data and element_data['sub_image_path']:
                                     table_ocr_path = element_data['sub_image_path'].replace('.jpg', '_ocr.json').replace('.png', '_ocr.json')
@@ -2022,29 +1822,6 @@ def get_all_extracted_content(pages_dir="pages", output_dir="page_elements"):
                                 if elements_path and os.path.exists(elements_path):
                                     element_record['chart_elements_path'] = elements_path
                                     
-                                    # Get chart element images and OCR
-                                    elements_dir = element_data['sub_image_path'].replace('.jpg', '_elements').replace('.png', '_elements')
-                                    if os.path.exists(elements_dir):
-                                        # Collect all element images in this directory
-                                        for elem_file in glob(os.path.join(elements_dir, "*.jpg")):
-                                            element_record['related_images'].append(elem_file)
-                                            
-                                            # Get OCR text for this element if available
-                                            ocr_path = elem_file.replace('.jpg', '_ocr.json')
-                                            if os.path.exists(ocr_path):
-                                                with open(ocr_path, 'r') as ocr_file:
-                                                    ocr_data = json.load(ocr_file)
-                                                    if 'data' in ocr_data and ocr_data['data']:
-                                                        for ocr_item in ocr_data['data']:
-                                                            if 'text_detections' in ocr_item:
-                                                                for text_det in ocr_item['text_detections']:
-                                                                    element_record['content_texts'].append({
-                                                                        'text': text_det['text_prediction']['text'],
-                                                                        'confidence': text_det['text_prediction']['confidence'],
-                                                                        'source': os.path.basename(elem_file),
-                                                                        'bounding_box': text_det.get('bounding_box')
-                                                                    })
-                                
                                 # Also try to find text content from the main chart image OCR
                                 if 'sub_image_path' in element_data and element_data['sub_image_path']:
                                     chart_ocr_path = element_data['sub_image_path'].replace('.jpg', '_ocr.json').replace('.png', '_ocr.json')
@@ -2084,7 +1861,25 @@ def get_all_extracted_content(pages_dir="pages", output_dir="page_elements"):
                                 
                                 # Add to titles list
                                 result['content_elements']['titles'].append(element_record)
-                                
+                            
+                            elif content_type == 'infographic':
+                                ocr_path = element_data['sub_image_path'].replace('.jpg', '_ocr.json') if 'sub_image_path' in element_data else None
+                                if ocr_path and os.path.exists(ocr_path):
+                                    with open(ocr_path, 'r') as ocr_file:
+                                        ocr_data = json.load(ocr_file)
+                                        if 'data' in ocr_data and ocr_data['data']:
+                                            for ocr_item in ocr_data['data']:
+                                                if 'text_detections' in ocr_item:
+                                                    for text_det in ocr_item['text_detections']:
+                                                        element_record['content_texts'].append({
+                                                            'text': text_det['text_prediction']['text'],
+                                                            'confidence': text_det['text_prediction']['confidence'],
+                                                            'source': 'infographic_main',
+                                                            'bounding_box': text_det.get('bounding_box')
+                                                        })
+
+                                result['content_elements']['other'].append(element_record)
+                            
                             else:
                                 # Add to other list
                                 result['content_elements']['other'].append(element_record)
@@ -2111,137 +1906,151 @@ def format_markdown_table(element, content_texts):
     
     markdown_lines = []
     
-    # Extract cell texts and organize by source for proper table structure
-    cell_texts = []
-    other_texts = []
-    
-    for content in content_texts:
-        text = content.get('text', '')
-        source = content.get('source', '')
-        if source and source.startswith('cell_'):
-            # Store cell data with source information
-            cell_texts.append((source, text))
-        elif text.strip():
-            other_texts.append(text)
+    def _parse_ocr_blocks_for_table(element_obj, contents):
+        sub_image_path = element_obj.get('sub_image_path')
+        if not sub_image_path or not os.path.exists(sub_image_path):
+            return []
+
+        try:
+            with Image.open(sub_image_path) as img:
+                img_width, img_height = img.size
+        except Exception:
+            img_width, img_height = 1, 1
+
+        blocks = []
+        for content in contents:
+            text = content.get('text', '')
+            if not text.strip():
+                continue
+            bbox = content.get('bounding_box')
+            points = bbox.get('points') if isinstance(bbox, dict) else None
+            if not isinstance(points, list) or not points:
+                continue
+            try:
+                xs = [float(pt.get('x', 0.0)) for pt in points]
+                ys = [float(pt.get('y', 0.0)) for pt in points]
+            except Exception:
+                continue
+            if not xs or not ys:
+                continue
+
+            x_min = min(xs)
+            x_max = max(xs)
+            y_min = min(ys)
+            y_max = max(ys)
+
+            # Normalize pixel-space OCR boxes to the same 0-1 coordinate space as table structure.
+            if max(x_max, y_max) > 1.0:
+                if img_width > 1:
+                    x_min /= img_width
+                    x_max /= img_width
+                if img_height > 1:
+                    y_min /= img_height
+                    y_max /= img_height
+
+            blocks.append({
+                'text': text.strip(),
+                'x_min': x_min,
+                'x_max': x_max,
+                'y_min': y_min,
+                'y_max': y_max,
+            })
+        return blocks
+
+    def _build_markdown_from_structure(element_obj, contents):
+        table_structure_path = element_obj.get('table_structure_path')
+        if not table_structure_path or not os.path.exists(table_structure_path):
+            return []
+
+        with open(table_structure_path, 'r') as struct_file:
+            struct_data = json.load(struct_file)
+
+        if 'bounding_boxes' not in struct_data or 'cell' not in struct_data['bounding_boxes']:
+            return []
+
+        cells = struct_data['bounding_boxes']['cell']
+        if not cells:
+            return []
+
+        ocr_blocks = _parse_ocr_blocks_for_table(element_obj, contents)
+        if not ocr_blocks:
+            return []
+
+        cell_data_with_coords = []
+        for cell in cells:
+            cx = (cell.get('x_min', 0) + cell.get('x_max', 0)) / 2
+            cy = (cell.get('y_min', 0) + cell.get('y_max', 0)) / 2
+
+            matched_texts = []
+            for block in ocr_blocks:
+                bx = (block['x_min'] + block['x_max']) / 2
+                by = (block['y_min'] + block['y_max']) / 2
+                if cell.get('x_min', 0) <= bx <= cell.get('x_max', 0) and cell.get('y_min', 0) <= by <= cell.get('y_max', 0):
+                    matched_texts.append(block)
+
+            matched_texts.sort(key=lambda b: (b['y_min'], b['x_min']))
+            cell_text = " ".join(block['text'] for block in matched_texts).strip()
+            if not cell_text:
+                continue
+
+            cell_data_with_coords.append({
+                'text': cell_text,
+                'x_min': cell.get('x_min', cx),
+                'y_min': cell.get('y_min', cy),
+                'x_max': cell.get('x_max', cx),
+                'y_max': cell.get('y_max', cy),
+            })
+
+        if not cell_data_with_coords:
+            return []
+
+        row_tolerance = 0.05
+        rows = []
+        used_cell_indices = set()
+        indexed_cell_data = [(i, cell) for i, cell in enumerate(cell_data_with_coords)]
+
+        for idx, cell in indexed_cell_data:
+            if idx in used_cell_indices:
+                continue
+
+            current_row = [cell]
+            used_cell_indices.add(idx)
+
+            for other_idx, other_cell in indexed_cell_data:
+                if other_idx in used_cell_indices:
+                    continue
+                if abs(cell['y_min'] - other_cell['y_min']) < row_tolerance:
+                    current_row.append(other_cell)
+                    used_cell_indices.add(other_idx)
+
+            current_row.sort(key=lambda c: c['x_min'])
+            rows.append(current_row)
+
+        rows.sort(key=lambda r: r[0]['y_min'] if r else 0)
+        if not rows:
+            return []
+
+        markdown_rows = []
+        headers = [cell['text'].strip() if cell['text'].strip() else " " for cell in rows[0]]
+        markdown_rows.append("| " + " | ".join(headers) + " |")
+        markdown_rows.append("|" + "|".join([" --- " for _ in headers]) + "|")
+
+        for row in rows[1:]:
+            row_data = [cell['text'].strip() if cell['text'].strip() else " " for cell in row]
+            markdown_rows.append("| " + " | ".join(row_data) + " |")
+
+        return markdown_rows
+
+    other_texts = [content.get('text', '') for content in content_texts if content.get('text', '').strip()]
 
     # Add any non-cell text first
-    for text in other_texts:
-        markdown_lines.append(f"> {text.strip()}")
-
-    # Now format cell data as markdown table if there's cell data
-    if cell_texts:
-        # Sort cells by their source order (cell_1, cell_2, etc.)
-        sorted_cells = sorted(cell_texts, key=lambda x: int(x[0].replace('cell_', '')) if x[0].startswith('cell_') else 0)
-
-        # Get the table structure to properly format the table
-        table_structure_path = element.get('table_structure_path')
-        if table_structure_path and os.path.exists(table_structure_path):
-            with open(table_structure_path, 'r') as struct_file:
-                struct_data = json.load(struct_file)
-
-            # Extract table structure to determine rows and columns
-            # The structure is direct in the file, not in a 'data' array
-            if 'bounding_boxes' in struct_data and 'cell' in struct_data['bounding_boxes']:
-                cells = struct_data['bounding_boxes']['cell']
-
-                # Now we'll use both the structure information and the OCR content
-                # to build a proper markdown table
-
-                # For a proper markdown table, we need to determine the grid structure
-                # from the cell coordinates. Since this is complex, we'll implement
-                # a simplified version that attempts to organize cells into rows.
-
-                # First, let's get the cell data with coordinates if available
-                # and the actual OCR text content
-                cell_data_with_coords = []
-                # Match cells from structure file with OCR content texts by index
-                # Only process cells that have corresponding OCR content
-                for i, (cell_id, text) in enumerate(sorted_cells):
-                    if i < len(cells):  # Only process if we have a corresponding structure cell
-                        cell_info = cells[i]
-                        # Use the structure coordinates and the OCR text
-                        cell_data_with_coords.append({
-                            'text': text,
-                            'x_min': cell_info.get('x_min', 0),
-                            'y_min': cell_info.get('y_min', 0),
-                            'x_max': cell_info.get('x_max', 1),
-                            'y_max': cell_info.get('y_max', 1)
-                        })
-
-                # If we have cell data, try to create a proper table structure
-                # This should be OUTSIDE the loop that builds cell_data_with_coords
-                if cell_data_with_coords:
-                    # For simplicity of this implementation, we'll sort cells by y-coordinate first
-                    # (for rows) and then by x-coordinate (for columns) to simulate table structure
-                    # This is a simplified approach - a robust implementation would use
-                    # more sophisticated algorithms to determine table grid
-
-                    # Group cells by similar y-coordinates (rows)
-                    # Use a simple approach with tolerance for y-coordinates
-                    row_tolerance = 0.05  # Adjust based on coordinate system
-                    rows = []
-                    used_cell_indices = set()  # Track indices of cells we've already used
-
-                    # Create a list of cell data with their original indices to properly track them
-                    indexed_cell_data = [(i, cell) for i, cell in enumerate(cell_data_with_coords)]
-
-                    for idx, cell in indexed_cell_data:
-                        if idx in used_cell_indices:
-                            continue
-
-                        current_row = [cell]
-                        used_cell_indices.add(idx)
-
-                        # Find other cells with similar y_min (in the same row)
-                        for other_idx, other_cell in indexed_cell_data:
-                            if other_idx in used_cell_indices:
-                                continue
-                            if abs(cell['y_min'] - other_cell['y_min']) < row_tolerance:
-                                current_row.append(other_cell)
-                                used_cell_indices.add(other_idx)
-
-                        # Sort cells in row by x-coordinate (left to right)
-                        current_row.sort(key=lambda c: c['x_min'])
-                        rows.append(current_row)
-
-                    # Now sort rows by y-coordinate (top to bottom)
-                    rows.sort(key=lambda r: r[0]['y_min'] if r else 0)
-
-                    # Create markdown table - only once
-                    if rows:
-                        # Create header row from first row if it looks like a header
-                        first_row = rows[0]
-                        headers = [cell['text'].strip() if cell['text'].strip() else " " for cell in first_row]
-                        header_row = "| " + " | ".join(headers) + " |"
-                        separator_row = "|" + "|".join([" --- " for _ in headers]) + "|"
-
-                        markdown_lines.append(header_row)
-                        markdown_lines.append(separator_row)
-
-                        # Add remaining rows
-                        for row in rows[1:]:
-                            row_data = [cell['text'].strip() if cell['text'].strip() else " " for cell in row]
-                            row_str = "| " + " | ".join(row_data) + " |"
-                            markdown_lines.append(row_str)
-                    else:
-                        # Fallback: if we cannot determine rows, just put all cells in one row
-                        all_texts = [cell['text'].strip() if cell['text'].strip() else " " for cell in cell_data_with_coords]
-                        if all_texts:
-                            header_row = "| " + " | ".join(all_texts) + " |"
-                            separator_row = "|" + "|".join([" --- " for _ in all_texts]) + "|"
-                            markdown_lines.append(header_row)
-                            markdown_lines.append(separator_row)
-        else:
-            # If no structure file, just display as list
-            for source, text in sorted_cells:
-                if text.strip():
-                    markdown_lines.append(f"- {text.strip()}")
+    structured_lines = _build_markdown_from_structure(element, content_texts)
+    if structured_lines:
+        markdown_lines.extend(structured_lines)
     else:
-        # If no cell texts, just display other texts (if any)
         for text in other_texts:
-            if text.strip():
-                markdown_lines.append(f"- {text.strip()}")
-    
+            markdown_lines.append(f"> {text.strip()}")
+
     return markdown_lines
 
 def format_markdown_chart(element, content_texts):
@@ -2255,71 +2064,27 @@ def format_markdown_chart(element, content_texts):
     Returns:
         list: List of markdown lines representing the chart content
     """
-    import os
-    
     markdown_lines = []
-    
-    # Process each text element in the chart
+
     for content in content_texts:
         text = content.get('text', '')
-        source = content.get('source', '')
-        
-        # Check if this is a chart element with source information
-        if source and text.strip():
-            # Extract a more meaningful name from the source (remove page info, element info)
-            # Example: "page_001_element_1_chart_ylabel_2.jpg" -> "Ylabel 2"
-            source_name = source.replace('.jpg', '').replace('.png', '')
-            
-            # Look for common chart element patterns and extract the meaningful part
-            # Handle complex multi-part names first
-            if 'chart_title' in source_name:
-                clean_source = 'Chart Title'
-            elif 'x_label' in source_name or 'xlabel' in source_name:
-                clean_source = 'X Label'
-            elif 'y_label' in source_name or 'ylabel' in source_name:
-                clean_source = 'Y Label'
-            elif 'legend' in source_name:
-                clean_source = 'Legend'
-            elif 'axis' in source_name:
-                clean_source = 'Axis'
-            else:
-                # For other cases, split by "_" and filter out common prefixes
-                parts = source_name.split('_')
-                
-                # Remove common prefixes like 'page', 'element', 'chart', numbers
-                meaningful_parts = []
-                i = 0
-                while i < len(parts):
-                    part = parts[i]
-                    
-                    # Skip common prefixes
-                    if part in ['page', 'element', 'chart'] or (part.isdigit() and len(part) <= 3):
-                        # Skip this and potentially the next part (if it's a page/element number)
-                        i += 1
-                        if i < len(parts) and parts[i].isdigit():
-                            i += 1
-                    else:
-                        meaningful_parts.append(part)
-                        i += 1
-                        
-                # Create a cleaner label from the meaningful parts
-                if meaningful_parts:
-                    clean_source = ' '.join(meaningful_parts).replace('_', ' ').title()
-                else:
-                    clean_source = source_name.replace('_', ' ').title()
-            
-            markdown_lines.append(f"> **{clean_source}:** {text.strip()}")
-        elif text.strip():
-            # If no specific source, just add the text
+        if text.strip():
             markdown_lines.append(f"> {text.strip()}")
-    
-    # If no content texts were processed, just return an empty list
-    if not markdown_lines:
-        # Add a placeholder if there are chart elements but no text
-        elements_dir = element.get('sub_image_path', '').replace('.jpg', '_elements') if element.get('sub_image_path') else None
-        if elements_dir and os.path.exists(elements_dir):
-            markdown_lines.append("> Chart elements detected but no text content extracted")
-    
+
+    return markdown_lines
+
+
+def format_markdown_infographic(element, content_texts):
+    """
+    Format infographic content as markdown from extracted content texts.
+    """
+    markdown_lines = []
+
+    for content in content_texts:
+        text = content.get('text', '')
+        if text.strip():
+            markdown_lines.append(f"> {text.strip()}")
+
     return markdown_lines
 
 def save_extracted_content_to_json(result_obj, extract_dir=None, output_file="extracted_content.json"):
@@ -2396,6 +2161,10 @@ def save_document_markdown(result_obj, extract_dir=None, source_fn=None):
                         chart_lines = format_markdown_chart(element, content_texts)
                         #print(chart_lines)
                         for line in chart_lines:
+                            markdown_content.append(line)
+                    elif element_type == 'infographic':
+                        infographic_lines = format_markdown_infographic(element, content_texts)
+                        for line in infographic_lines:
                             markdown_content.append(line)
                     else:
                         # Handle non-chart, non-table content as before
@@ -2609,6 +2378,36 @@ def generate_embeddings_from_result(result_obj, api_key=None):
                         })
                 except:
                     # Fallback if format_markdown_chart fails
+                    element_content_parts = []
+                    for content in content_texts:
+                        text = content.get('text', '')
+                        if text.strip():
+                            element_content_parts.append(text.strip())
+                    if element_content_parts:
+                        combined_content = ' '.join(element_content_parts)
+                        content_chunks.append({
+                            'type': element_type,
+                            'page_name': page_name,
+                            'content': combined_content,
+                            'element_type': element_type,
+                            'source': page_name + '_' + element_type + '_' + str(element_idx+1)
+                        })
+            
+            # For infographics, embed their markdown formatted content
+            elif element_type == 'infographic' and content_texts:
+                try:
+                    infographic_lines = format_markdown_infographic(element, content_texts)
+                    formatted_content = '\n'.join(infographic_lines) if infographic_lines else ''
+
+                    if formatted_content.strip():
+                        content_chunks.append({
+                            'type': element_type,
+                            'page_name': page_name,
+                            'content': formatted_content,
+                            'element_type': element_type,
+                            'source': page_name + '_' + element_type + '_' + str(element_idx+1)
+                        })
+                except:
                     element_content_parts = []
                     for content in content_texts:
                         text = content.get('text', '')
