@@ -905,7 +905,21 @@ def process_page_images(pages_dir="pages", output_dir="page_elements", timing=Fa
     api_key = os.getenv("NVIDIA_API_KEY")
     if not api_key:
         print("NVIDIA_API_KEY environment variable not set. Skipping page element extraction.")
-        return
+        if timing:
+            return {
+                'pdf_extraction_time': pdf_extraction_time,
+                'page_elements_time': 0,
+                'table_structure_time': 0,
+                'chart_structure_time': 0,
+                'ocr_time': 0,
+                'ai_processing_time': 0,
+                'ocr_task_counts': {
+                    'table_cells': 0,
+                    'chart_elements': 0,
+                    'titles': 0
+                }
+            }
+        return None
     
     # Create output directory
     os.makedirs(output_dir, exist_ok=True)
@@ -951,38 +965,29 @@ def process_page_images(pages_dir="pages", output_dir="page_elements", timing=Fa
             #         except:
             #             print(f"DEBUG: First batch_result is iterable but length unknown")
             
-            # Process the batch results
-            # FIX: extract_bounding_boxes_batch returns results for the CURRENT batch (single batch),
-            # not a list of all batches processed so far.
-            # So we always take index 0, not i // batch_size
+            # Process the batch results. The batch helper may split this outer batch into
+            # multiple API calls, so flatten the page data across all returned responses.
             if len(batch_results) == 0:
                 print(f"ERROR: No batch results returned for batch with {len(batch_paths)} images")
                 raise ValueError(f"No batch results returned for batch with {len(batch_paths)} images")
-            
-            batch_result = batch_results[0]  # Get the result for the current batch
-            # print(f"DEBUG: Successfully retrieved batch_result at index 0 (current batch)")
-            
-            # The API response structure has 'data' field which contains page data for each image in the batch
-            if 'data' in batch_result:
-                batch_page_data = batch_result['data']
-                
-                for img_idx, img_path in enumerate(batch_paths):
-                    # print(f"Processing {img_path}...")  # Commented out to reduce noise
-                    if img_idx < len(batch_page_data):
-                        page_data = batch_page_data[img_idx]
-                    else:
-                        # print(f"No data found in response for {img_path}")  # Commented out to reduce noise
-                        continue
-                    
 
-                    
-                    if 'bounding_boxes' in page_data:
-                        bounding_boxes = page_data['bounding_boxes']
-                        
-                        # Open the original image to crop sub-images
-                        original_image = Image.open(img_path)
-                        img_width, img_height = original_image.size
-                    
+            batch_page_data = []
+            for batch_result in batch_results:
+                if 'data' in batch_result and isinstance(batch_result['data'], list):
+                    batch_page_data.extend(batch_result['data'])
+
+            for img_idx, img_path in enumerate(batch_paths):
+                if img_idx >= len(batch_page_data):
+                    continue
+
+                page_data = batch_page_data[img_idx]
+                bounding_boxes = page_data.get('bounding_boxes')
+                if not bounding_boxes:
+                    continue
+
+                with Image.open(img_path) as original_image:
+                    img_width, img_height = original_image.size
+
                     # Process each content type (table, chart, title, etc.)
                     for content_type, elements in bounding_boxes.items():
                         if elements:  # If there are elements of this type
@@ -1051,9 +1056,6 @@ def process_page_images(pages_dir="pages", output_dir="page_elements", timing=Fa
                                 
                                 with open(jsonl_filename, 'a') as f:
                                     f.write(json.dumps(element_with_type) + '\n')
-                                    
-                    # Close the original image to free memory
-                    original_image.close()
         except Exception as e:
             print(f"Error processing page elements batch: {str(e)}")
             # DEBUG: Add more detailed error information
@@ -1668,74 +1670,21 @@ def get_content_counts_with_text_stats(output_dir="page_elements"):
                         page_inference_requests = 0
                         
                         if content_type == 'table':
-                            # 1 for table structure + 1 per cell for OCR
+                            # 1 for table structure + 1 per saved cell OCR result
                             counts['total_inference_requests'] += 1
                             counts['content_type_breakdown'][content_type]['inference_requests'] += 1
                             page_inference_requests += 1
                             
-                            # Count cells if structure file exists
-                            if 'structure_path' in data and os.path.exists(data['structure_path']):
-                                with open(data['structure_path'], 'r') as struct_file:
-                                    struct_data = json.load(struct_file)
-                                    cell_count = 0
-                                    if 'data' in struct_data and struct_data['data']:
-                                        for page_struct in struct_data['data']:
-                                            if 'bounding_boxes' in page_struct and 'cell' in page_struct['bounding_boxes']:
-                                                cell_count = len(page_struct['bounding_boxes']['cell'])
-                                    counts['total_inference_requests'] += cell_count
-                                    counts['content_type_breakdown'][content_type]['inference_requests'] += cell_count
-                                    page_inference_requests += cell_count
-                                    
-                                    # Count OCR requests for each cell and collect text stats
-                                    cells_dir = data['sub_image_path'].replace('.jpg', '_cells')
-                                    if os.path.exists(cells_dir):
-                                        cell_files = glob(os.path.join(cells_dir, "*_ocr.json"))
-                                        counts['total_inference_requests'] += len(cell_files)
-                                        counts['content_type_breakdown'][content_type]['inference_requests'] += len(cell_files)
-                                        page_inference_requests += len(cell_files)
-                                        
-                                        # Collect text stats from each cell's OCR
-                                        for cell_file in cell_files:
-                                            with open(cell_file, 'r') as ocr_f:
-                                                ocr_data = json.load(ocr_f)
-                                                if 'data' in ocr_data and ocr_data['data']:
-                                                    for ocr_item in ocr_data['data']:
-                                                        if 'text_detections' in ocr_item:
-                                                            for text_det in ocr_item['text_detections']:
-                                                                text = text_det['text_prediction']['text']
-                                                                words = len(text.split())
-                                                                chars = len(text)
-                                                                lines = text.count('\n') + 1
-                                                                
-                                                                page_text_stats['words'] += words
-                                                                page_text_stats['chars'] += chars
-                                                                page_text_stats['lines'] += lines
-                                                                
-                                                                counts['total_text_stats']['words'] += words
-                                                                counts['total_text_stats']['chars'] += chars
-                                                                counts['total_text_stats']['lines'] += lines
-                                                                
-                                                                counts['content_type_breakdown'][content_type]['text_stats']['words'] += words
-                                                                counts['content_type_breakdown'][content_type]['text_stats']['chars'] += chars
-                                                                counts['content_type_breakdown'][content_type]['text_stats']['lines'] += lines
-                        
-                        elif content_type == 'chart':
-                                # 1 for graphic elements + 1 per element for OCR
-                                counts['total_inference_requests'] += 1
-                                counts['content_type_breakdown'][content_type]['inference_requests'] += 1
-                                page_inference_requests += 1
-                            
-                                # Count OCR requests for chart elements and collect text stats
-                                elements_dir = data['sub_image_path'].replace('.jpg', '_elements')
-                                if os.path.exists(elements_dir):
-                                    ocr_files = glob(os.path.join(elements_dir, "*_ocr.json"))
-                                counts['total_inference_requests'] += len(ocr_files)
-                                counts['content_type_breakdown'][content_type]['inference_requests'] += len(ocr_files)
-                                page_inference_requests += len(ocr_files)
-                                
-                                # Collect text stats from chart elements' OCR
-                                for ocr_file in ocr_files:
-                                    with open(ocr_file, 'r') as ocr_f:
+                            cells_dir = data['sub_image_path'].replace('.jpg', '_cells')
+                            if os.path.exists(cells_dir):
+                                cell_files = glob(os.path.join(cells_dir, "*_ocr.json"))
+                                counts['total_inference_requests'] += len(cell_files)
+                                counts['content_type_breakdown'][content_type]['inference_requests'] += len(cell_files)
+                                page_inference_requests += len(cell_files)
+
+                                # Collect text stats from each cell's OCR
+                                for cell_file in cell_files:
+                                    with open(cell_file, 'r') as ocr_f:
                                         ocr_data = json.load(ocr_f)
                                         if 'data' in ocr_data and ocr_data['data']:
                                             for ocr_item in ocr_data['data']:
@@ -1745,18 +1694,58 @@ def get_content_counts_with_text_stats(output_dir="page_elements"):
                                                         words = len(text.split())
                                                         chars = len(text)
                                                         lines = text.count('\n') + 1
-                                                        
+
                                                         page_text_stats['words'] += words
                                                         page_text_stats['chars'] += chars
                                                         page_text_stats['lines'] += lines
-                                                        
+
                                                         counts['total_text_stats']['words'] += words
                                                         counts['total_text_stats']['chars'] += chars
                                                         counts['total_text_stats']['lines'] += lines
-                                                        
+
                                                         counts['content_type_breakdown'][content_type]['text_stats']['words'] += words
                                                         counts['content_type_breakdown'][content_type]['text_stats']['chars'] += chars
                                                         counts['content_type_breakdown'][content_type]['text_stats']['lines'] += lines
+                        
+                        elif content_type == 'chart':
+                            # 1 for graphic elements + 1 per chart element OCR output
+                            counts['total_inference_requests'] += 1
+                            counts['content_type_breakdown'][content_type]['inference_requests'] += 1
+                            page_inference_requests += 1
+
+                            elements_dir = data['sub_image_path'].replace('.jpg', '_elements')
+                            ocr_files = []
+                            if os.path.exists(elements_dir):
+                                ocr_files = glob(os.path.join(elements_dir, "*_ocr.json"))
+
+                            counts['total_inference_requests'] += len(ocr_files)
+                            counts['content_type_breakdown'][content_type]['inference_requests'] += len(ocr_files)
+                            page_inference_requests += len(ocr_files)
+
+                            # Collect text stats from chart elements' OCR
+                            for ocr_file in ocr_files:
+                                with open(ocr_file, 'r') as ocr_f:
+                                    ocr_data = json.load(ocr_f)
+                                    if 'data' in ocr_data and ocr_data['data']:
+                                        for ocr_item in ocr_data['data']:
+                                            if 'text_detections' in ocr_item:
+                                                for text_det in ocr_item['text_detections']:
+                                                    text = text_det['text_prediction']['text']
+                                                    words = len(text.split())
+                                                    chars = len(text)
+                                                    lines = text.count('\n') + 1
+
+                                                    page_text_stats['words'] += words
+                                                    page_text_stats['chars'] += chars
+                                                    page_text_stats['lines'] += lines
+
+                                                    counts['total_text_stats']['words'] += words
+                                                    counts['total_text_stats']['chars'] += chars
+                                                    counts['total_text_stats']['lines'] += lines
+
+                                                    counts['content_type_breakdown'][content_type]['text_stats']['words'] += words
+                                                    counts['content_type_breakdown'][content_type]['text_stats']['chars'] += chars
+                                                    counts['content_type_breakdown'][content_type]['text_stats']['lines'] += lines
                         
                         else:
                             # For other content types like titles, just OCR on the element

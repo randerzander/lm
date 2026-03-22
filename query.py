@@ -157,22 +157,14 @@ def main():
     parser = argparse.ArgumentParser(description="Query documents using LanceDB and LLM")
     parser.add_argument("query", nargs='?', help="Question to ask about the documents")
     parser.add_argument("--db-path", help="Path to the LanceDB directory (default: ./lancedb)")
+    parser.add_argument("--source-document", help="Restrict retrieval to a specific source document")
     parser.add_argument("--limit", type=int, default=5, help="Number of results to retrieve (default: 5)")
     
     args = parser.parse_args()
     
     # Set default db path if not provided
     if not args.db_path:
-        # Default to a common lancedb path that can contain all documents
-        # If multiple document directories exist, we'll look for the first one with a lancedb directory
-        import glob
-        db_paths = glob.glob("./extracts/*/lancedb")
-        if db_paths:
-            # Use the first available lancedb directory
-            args.db_path = db_paths[0]
-        else:
-            # Default fallback
-            args.db_path = "./lancedb"
+        args.db_path = "./lancedb"
     
     # Check if query is provided either as argument or to be read from stdin
     if not args.query:
@@ -196,10 +188,9 @@ def main():
         extracts_dir = "./extracts"
         if os.path.exists(extracts_dir):
             available_docs = [d for d in os.listdir(extracts_dir) 
-                             if os.path.isdir(os.path.join(extracts_dir, d)) 
-                             and os.path.exists(os.path.join(extracts_dir, d, "lancedb"))]
+                             if os.path.isdir(os.path.join(extracts_dir, d))]
             if available_docs:
-                print(f"\nAvailable documents with LanceDB databases:")
+                print(f"\nAvailable source documents:")
                 for doc in available_docs:
                     print(f"  --source-document {doc}")
                 print(f"\nExample: python query.py --source-document {available_docs[0]} '{args.query}'")
@@ -208,7 +199,7 @@ def main():
     
     # Query the database to get relevant context
     print("Searching for relevant context...")
-    results = query_lancedb(args.db_path, args.query, None, args.limit)
+    results = query_lancedb(args.db_path, args.query, args.source_document, args.limit)
     
     if not results:
         print("No relevant content found in the database.")

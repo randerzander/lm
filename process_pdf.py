@@ -232,15 +232,15 @@ def extract(pdf_path="data/multimodal_test.pdf", output_dir="page_elements", ext
     
     # Process page images to extract content elements with structure and OCR
     ai_processing_start = time.time()
-    timing_data = utils.process_page_images(pages_dir=pages_dir, output_dir=elements_dir, timing=timing, ocr_titles=ocr_titles, batch_processing=True, batch_size=25, pdf_extraction_time=pdf_extraction_time)
+    timing_data = utils.process_page_images(pages_dir=pages_dir, output_dir=elements_dir, timing=timing, ocr_titles=ocr_titles, batch_processing=True, batch_size=25, pdf_extraction_time=pdf_extraction_time) or {}
     ai_processing_time_total = time.time() - ai_processing_start
 
-    page_elements_time = timing_data['page_elements_time']
-    table_structure_time = timing_data['table_structure_time']
-    chart_structure_time = timing_data['chart_structure_time']
-    ocr_time = timing_data['ocr_time']
+    page_elements_time = timing_data.get('page_elements_time', 0)
+    table_structure_time = timing_data.get('table_structure_time', 0)
+    chart_structure_time = timing_data.get('chart_structure_time', 0)
+    ocr_time = timing_data.get('ocr_time', 0)
     # Use the actual AI processing time (the time spent in utils.process_page_images function)
-    ai_processing_time = timing_data['ai_processing_time']
+    ai_processing_time = timing_data.get('ai_processing_time', 0)
     
     # Step 3: Create consolidated result object
     result_creation_start = time.time()
@@ -304,6 +304,9 @@ def extract(pdf_path="data/multimodal_test.pdf", output_dir="page_elements", ext
         # Get OCR task counts for breakdown
         ocr_task_counts = timing_data.get('ocr_task_counts', {'table_cells': 0, 'chart_elements': 0, 'titles': 0})
         total_ocr_tasks = ocr_task_counts['table_cells'] + ocr_task_counts['chart_elements'] + ocr_task_counts['titles']
+        title_pct = 0
+        cell_pct = 0
+        chart_pct = 0
 
         ocr_task_counts = timing_data.get('ocr_task_counts', {'table_cells': 0, 'chart_elements': 0, 'titles': 0})
         total_ocr_tasks = ocr_task_counts['table_cells'] + ocr_task_counts['chart_elements'] + ocr_task_counts['titles']
