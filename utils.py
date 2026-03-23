@@ -2269,6 +2269,13 @@ def save_to_lancedb(embedding_results, extract_dir=None, source_fn=None):
     else:
         # Create new table
         table = db.create_table(table_name, table_data)
+
+    # Best-effort creation of a BM25/FTS index for LanceDB hybrid search.
+    # If the index already exists, LanceDB may raise; keep the table usable.
+    try:
+        table.create_fts_index("content")
+    except Exception:
+        pass
     
     indexing_time = time.time() - start_time
     log(f"Successfully saved {len(valid_results)} embeddings to LanceDB table '{table_name}' in {db_path}")

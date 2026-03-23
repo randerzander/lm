@@ -7,6 +7,10 @@ import argparse
 import os
 import lancedb
 from openai import OpenAI
+try:
+    from lancedb.rerankers import RRFReranker
+except Exception:  # pragma: no cover
+    RRFReranker = None
 
 
 def query_lancedb(db_path, query_text, source_document=None, limit=5):
@@ -55,13 +59,22 @@ def query_lancedb(db_path, query_text, source_document=None, limit=5):
         
         query_embedding = response.data[0].embedding
         
-        # Query the table using vector search
+        # Query the table using LanceDB hybrid search (dense + BM25/FTS).
+        # RRF is LanceDB's default hybrid reranker; use it explicitly when available.
+        search_builder = (
+            table.search(query_type="hybrid")
+            .vector(query_embedding)
+            .text(query_text)
+        )
+        if RRFReranker is not None:
+            search_builder = search_builder.rerank(RRFReranker())
+
         # If source_document is provided, filter by that document
         if source_document:
-            results = table.search(query_embedding).where(f"source_document = '{source_document}'").limit(limit).to_list()
+            results = search_builder.where(f"source_document = '{source_document}'").limit(limit).to_list()
         else:
             # Search across all documents
-            results = table.search(query_embedding).limit(limit).to_list()
+            results = search_builder.limit(limit).to_list()
         
         return results
         

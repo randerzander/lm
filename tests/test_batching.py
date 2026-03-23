@@ -36,6 +36,39 @@ class TestQueryCli(unittest.TestCase):
         self.assertIsNone(result)
         query_lancedb.assert_called_once_with("./lancedb", "what is this?", "doc1", 5)
 
+    def test_query_lancedb_uses_hybrid_search_builder(self):
+        query = import_query_module()
+
+        fake_search = mock.Mock()
+        fake_search.vector.return_value = fake_search
+        fake_search.text.return_value = fake_search
+        fake_search.rerank.return_value = fake_search
+        fake_search.limit.return_value = fake_search
+        fake_search.to_list.return_value = [{"content": "result"}]
+
+        fake_table = mock.Mock()
+        fake_table.search.return_value = fake_search
+
+        fake_db = mock.Mock()
+        fake_db.table_names.return_value = ["all_documents"]
+        fake_db.open_table.return_value = fake_table
+
+        fake_embedding_response = mock.Mock()
+        fake_embedding_response.data = [mock.Mock(embedding=[0.1, 0.2, 0.3])]
+
+        fake_client = mock.Mock()
+        fake_client.embeddings.create.return_value = fake_embedding_response
+
+        with mock.patch.object(query.lancedb, "connect", return_value=fake_db):
+            with mock.patch.object(query, "OpenAI", return_value=fake_client):
+                results = query.query_lancedb("./lancedb", "hybrid query", None, 5)
+
+        self.assertEqual(results, [{"content": "result"}])
+        fake_table.search.assert_called_once_with(query_type="hybrid")
+        fake_search.vector.assert_called_once_with([0.1, 0.2, 0.3])
+        fake_search.text.assert_called_once_with("hybrid query")
+        fake_search.limit.assert_called_once_with(5)
+
 
 if __name__ == "__main__":
     unittest.main()
